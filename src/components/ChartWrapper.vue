@@ -13,7 +13,7 @@
           <div class="transfer-panel">
             <ElButton type="primary" @click="selectDataSerie">从表格中添加数据列</ElButton>
             <el-transfer v-model="selectedSeries" :data="series" :titles="['可选数据列', '已选数据列']" />
-            <ElButton type="primary" @click="fillChart">更新图表</ElButton>
+            <ElButton type="primary" @click="updateChart">更新图表</ElButton>
           </div>
         </ElCollapseItem>
         <ElCollapseItem title='显示范围控制'>
@@ -39,7 +39,8 @@
             <div class="correction-select">
               <label>选择数据列:</label>
               <el-select v-model="correctionForm.seriesKey" placeholder="请选择要修正的数据列" style="width: 250px">
-                <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label" :value="serie.key.toString()" />
+                <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
+                  :value="serie.key.toString()" />
               </el-select>
             </div>
             <div class="correction-operation">
@@ -53,7 +54,8 @@
             </div>
             <div class="correction-value">
               <label>修正值:</label>
-              <el-input-number v-model="correctionForm.value" :precision="6" :step="0.1" style="width: 200px" placeholder="请输入修正值" />
+              <el-input-number v-model="correctionForm.value" :precision="6" :step="0.1" style="width: 200px"
+                placeholder="请输入修正值" />
             </div>
             <div class="correction-apply-mode">
               <label>应用方式:</label>
@@ -79,13 +81,15 @@
               <div class="select-group">
                 <label>数据列A:</label>
                 <el-select v-model="comparisonForm.seriesAKey" placeholder="请选择第一个数据列" style="width: 200px">
-                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label" :value="serie.key.toString()" />
+                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
+                    :value="serie.key.toString()" />
                 </el-select>
               </div>
               <div class="select-group">
                 <label>数据列B:</label>
                 <el-select v-model="comparisonForm.seriesBKey" placeholder="请选择第二个数据列" style="width: 200px">
-                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label" :value="serie.key.toString()" />
+                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
+                    :value="serie.key.toString()" />
                 </el-select>
               </div>
             </div>
@@ -111,6 +115,34 @@
           </div>
         </ElCollapseItem>
         <ElCollapseItem title='数据列求导'></ElCollapseItem>
+        <ElCollapseItem title='数据分析'>
+          <ElCollapse>
+            <ElCollapseItem title="最值和区间">
+              <div class="analysis-controls">
+                <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列" style="width: 250px">
+                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
+                    :value="serie.key.toString()" />
+                </el-select>
+                <div class="analysis-row">
+                  <label>搜索 x% 最大值范围：</label>
+                  <ElInput v-model="analysisForm.range" placeholder="请输入区间范围：" style="width: 150px" />
+                </div>
+                <div class="analysis-row">
+                  <ElButton type="primary" @click="performAnalysisMaxRange">执行分析</ElButton>
+                  <ElButton type="success" @click="highlightAnalysisRange" :disabled="!maxResult">高亮区间</ElButton>
+                  <ElButton type="info" @click="clearAnalysisResult">清除结果</ElButton>
+                </div>
+                <div class="analysis-result" v-if="maxResult">
+                  <p>最大值: {{ maxResult.maxValue }}</p>
+                  <p>最大值位置: {{ maxResult.maxValueIndex / 100 }}秒</p>
+                  <p>指定百分数区间范围起点: {{ maxResult.rangeStart / 100 }}秒</p>
+                  <p>指定百分数区间范围终点: {{ maxResult.rangeEnd / 100 }}秒</p>
+                </div>
+              </div>
+            </ElCollapseItem>
+            <ElCollapseItem title="峰值搜索"></ElCollapseItem>
+          </ElCollapse>
+        </ElCollapseItem>
       </ElCollapse>
     </div>
     <div class="chartColumn">
@@ -170,6 +202,7 @@ import * as echarts from 'echarts'
 import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElRadio, ElRadioGroup } from 'element-plus'
 import type { UploadFile } from 'element-plus';
 import { generateContinuousData, generateTimeData } from '@/test';
+import { findMaxRange, maxRangeResult } from '@/analyse';
 import * as XLSX from 'xlsx';
 
 interface dataSerie {
@@ -240,6 +273,14 @@ const correctionForm = ref({
 // 修正预览相关
 const showCorrectionPreview = ref(false);
 const currentCorrectionPreview = ref<dataSerie | null>(null);
+
+// 数据分析相关的响应式变量
+const analysisForm = ref({
+  seriesKey: '' as string,
+  range: 90 as number // 默认搜索范围为90%
+});
+
+const maxResult = ref<maxRangeResult | null>(null);
 
 const loading = ref(false);
 
@@ -456,10 +497,10 @@ const availableSeriesForComparison = computed(() => {
 });
 
 const canPerformComparison = computed(() => {
-  return comparisonForm.value.seriesAKey && 
-         comparisonForm.value.seriesBKey && 
-         comparisonForm.value.seriesAKey !== comparisonForm.value.seriesBKey &&
-         comparisonForm.value.resultName.trim() !== '';
+  return comparisonForm.value.seriesAKey &&
+    comparisonForm.value.seriesBKey &&
+    comparisonForm.value.seriesAKey !== comparisonForm.value.seriesBKey &&
+    comparisonForm.value.resultName.trim() !== '';
 });
 
 // 数据列比对相关的方法
@@ -471,7 +512,7 @@ const performComparison = () => {
 
   const seriesAKey = parseInt(comparisonForm.value.seriesAKey);
   const seriesBKey = parseInt(comparisonForm.value.seriesBKey);
-  
+
   const seriesA = series.value.find(s => s.key === seriesAKey);
   const seriesB = series.value.find(s => s.key === seriesBKey);
 
@@ -526,17 +567,17 @@ const performComparison = () => {
 
   // 显示结果图表
   showResult.value = true;
-  
+
   // 等待DOM更新后初始化结果图表
   setTimeout(() => {
     if (resultChartInstance && resultChartContainer.value) {
       const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
       const resultOption = chartOptionFromSeries([resultSerie], currentTimeData.slice(0, minLength));
       resultChartInstance.setOption(resultOption, true);
-      
+
       // 同步缩放状态
       updateDataZoom();
-      
+
       ElMessage.success(`比对完成：${seriesA.label} ${getOperationText(comparisonForm.value.operation)} ${seriesB.label}`);
     } else {
       ElMessage.error('结果图表初始化失败，请稍后重试');
@@ -558,14 +599,14 @@ const getOperationText = (operation: string): string => {
 const clearComparisonResult = () => {
   showResult.value = false;
   currentComparisonResult.value = null;
-  
+
   // 如果没有修正预览在显示，则清空图表
   if (!showCorrectionPreview.value) {
     if (resultChartInstance) {
       resultChartInstance.clear();
     }
   }
-  
+
   ElMessage.info('已清除比对结果');
 };
 
@@ -598,11 +639,11 @@ const saveComparisonResult = () => {
 
 // 数据列修正相关的计算属性
 const canPerformCorrection = computed(() => {
-  return correctionForm.value.seriesKey && 
-         correctionForm.value.operation && 
-         correctionForm.value.value !== undefined &&
-         (correctionForm.value.applyMode === 'replace' || 
-          (correctionForm.value.applyMode === 'new' && correctionForm.value.newName.trim() !== ''));
+  return correctionForm.value.seriesKey &&
+    correctionForm.value.operation &&
+    correctionForm.value.value !== undefined &&
+    (correctionForm.value.applyMode === 'replace' ||
+      (correctionForm.value.applyMode === 'new' && correctionForm.value.newName.trim() !== ''));
 });
 
 // 数据列修正相关的方法
@@ -627,7 +668,7 @@ const performCorrection = () => {
     // 替换原数据
     targetSerie.serie.data = correctedData;
     ElMessage.success(`已修正数据列：${targetSerie.label}`);
-    
+
     // 如果该数据列当前被选中显示，则更新图表
     if (selectedSeries.value.includes(seriesKey)) {
       fillChart();
@@ -694,10 +735,10 @@ const previewCorrection = () => {
       const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
       const previewOption = chartOptionFromSeries([previewSerie], currentTimeData.slice(0, correctedData.length));
       resultChartInstance.setOption(previewOption, true);
-      
+
       // 同步缩放状态
       updateDataZoom();
-      
+
       ElMessage.success(`预览修正效果：${getOperationText(correctionForm.value.operation)} ${correctionForm.value.value}`);
     } else {
       ElMessage.error('预览图表初始化失败，请稍后重试');
@@ -743,8 +784,8 @@ const applyCorrectionToData = (data: number[], operation: string, value: number)
 };
 
 // 根据数据系列生成完整的图表配置
-const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts.EChartsOption => {
-  return {
+const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highlightRange?: { start: number, end: number }): echarts.EChartsOption => {
+  const option: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
       backgroundColor: 'rgba(0, 0, 0, 0.8)',
@@ -757,6 +798,7 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts
           const time = params[0].axisValue
           let result = `时间: ${time}<br/>`
           params.forEach((param: any) => {
+            if(param.seriesName == 'highlight-helper') return; // 跳过辅助系列
             result += `${param.marker}${param.seriesName}: ${param.value}<br/>`
           })
           return result
@@ -789,11 +831,11 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts
       {
         type: 'inside',
         start: 0,
-        end: 10
+        end: 100
       },
       {
         start: 0,
-        end: 10,
+        end: 100,
         height: 30,
         bottom: '2%'
       }
@@ -859,8 +901,138 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts
     })),
     animation: false, // 关闭动画
     notMerge: true // 取消合并options实现图表实时更新
+  };
+
+  // 如果有高亮范围，添加visualMap组件
+  if (highlightRange && series.length > 0) {
+    // 创建标记数组，用于visualMap
+    const markData = new Array(series[0].data.length).fill(0);
+    for (let i = highlightRange.start; i <= highlightRange.end; i++) {
+      if (i >= 0 && i < markData.length) {
+        markData[i] = 1;
+      }
+    }
+
+    // 添加一个隐藏的辅助系列用于visualMap
+    const seriesArray = option.series as any[];
+    seriesArray.push({
+      name: 'highlight-helper',
+      type: 'line',
+      data: markData,
+      showSymbol: false,
+      lineStyle: {
+        opacity: 0
+      },
+      itemStyle: {
+        opacity: 0
+      },
+      silent: true
+    });
+
+    // 添加visualMap组件
+    option.visualMap = {
+      show: false,
+      type: 'piecewise',
+      seriesIndex: seriesArray.length - 1, // 应用到辅助系列
+      dimension: 1, // 按y轴值分段
+      pieces: [
+        {
+          value: 0,
+          color: 'transparent'
+        },
+        {
+          value: 1,
+          color: 'rgba(255, 0, 0, 0.2)'
+        }
+      ]
+    };
+
+    // 添加标记区域
+    (seriesArray[0] as any).markArea = {
+      silent: true,
+      itemStyle: {
+        color: 'rgba(255, 100, 100, 0.2)',
+        borderColor: 'rgba(255, 100, 100, 0.8)',
+        borderWidth: 1
+      },
+      data: [[
+        {
+          xAxis: highlightRange.start,
+          name: '分析结果区间'
+        },
+        {
+          xAxis: highlightRange.end
+        }
+      ]]
+    };
   }
 
+  return option;
+}
+
+const clearAnalysisResult = () => {
+  maxResult.value = null;
+  // 清除高亮，重新绘制图表
+  fillChart();
+  ElMessage.info('已清除分析结果');
+}
+
+const highlightAnalysisRange = () => {
+  if (!maxResult.value) {
+    ElMessage.warning('没有分析结果可以高亮');
+    return;
+  }
+
+  const highlightRange = {
+    start: maxResult.value.rangeStart,
+    end: maxResult.value.rangeEnd
+  };
+
+  fillChart(highlightRange);
+  ElMessage.success('已高亮显示分析区间');
+}
+
+const performAnalysisMaxRange = () => {
+  const seriesKey = analysisForm.value.seriesKey;
+  const range = analysisForm.value.range;
+
+  if (!seriesKey || !range) {
+    ElMessage.warning('请选择数据列并输入搜索范围');
+    return;
+  }
+
+  const targetSerie = series.value.find(s => s.key === parseInt(seriesKey));
+  if (!targetSerie) {
+    ElMessage.error('找不到选中的数据列');
+    return;
+  }
+
+  // 执行最大值范围分析
+  const result = findMaxRange(targetSerie.serie.data, range);
+  if (result.maxValueIndex === -1) {
+    ElMessage.error('未找到符合条件的最大值范围');
+    return;
+  }
+  maxResult.value = {
+    maxValue: targetSerie.serie.data[result.maxValueIndex],
+    maxValueIndex: result.maxValueIndex,
+    rangeStart: result.rangeStart,
+    rangeEnd: result.rangeEnd,
+  };
+
+  // 高亮显示分析区间
+  const highlightRange = {
+    start: result.rangeStart,
+    end: result.rangeEnd
+  };
+
+  // 如果分析的数据列在当前选中的系列中，则更新主图表以显示高亮区间
+  if (selectedSeries.value.includes(parseInt(seriesKey))) {
+    fillChart(highlightRange);
+    ElMessage.success(`分析完成！已在图表中高亮显示 ${range}% 最大值区间`);
+  } else {
+    ElMessage.success(`分析完成！请在数据列选择中选中该数据列以查看高亮区间`);
+  }
 }
 
 // 图表实例
@@ -955,7 +1127,7 @@ const initChart = () => {
   window.addEventListener('resize', handleResize)
 }
 
-const fillChart = () => {
+const fillChart = (highlightRange?: { start: number, end: number }) => {
   if (!chartInstance) return
 
   let selected = series.value.map(s => ({
@@ -976,9 +1148,14 @@ const fillChart = () => {
   const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
 
   // 配置项
-  const option: echarts.EChartsOption = chartOptionFromSeries(chartData, currentTimeData);
+  const option: echarts.EChartsOption = chartOptionFromSeries(chartData, currentTimeData, highlightRange);
 
   chartInstance.setOption(option, true)
+}
+
+// 模板中使用的更新图表函数
+const updateChart = () => {
+  fillChart();
 }
 
 // 处理窗口大小变化
@@ -1167,6 +1344,39 @@ onUnmounted(() => {
 .correction-buttons {
   display: flex;
   gap: 10px;
+}
+
+.analysis-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.analysis-row {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  margin-right: auto;
+}
+
+.analysis-result {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  border-left: 4px solid #409EFF;
+}
+
+.analysis-result p {
+  margin: 8px 0;
+  font-size: 14px;
+  color: #333;
+}
+
+.analysis-result p:first-child {
+  font-weight: bold;
+  color: #409EFF;
 }
 
 .time-input {
