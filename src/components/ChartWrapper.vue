@@ -13,8 +13,8 @@
           <div class="transfer-panel">
             <ElButton type="primary" @click="selectDataSerie">从表格中添加数据列</ElButton>
             <el-transfer v-model="selectedSeries" :data="series" :titles="['可选数据列', '已选数据列']" />
+            <ElButton type="primary" @click="fillChart">更新图表</ElButton>
           </div>
-          <ElButton type="primary" @click="fillChart">更新图表</ElButton>
         </ElCollapseItem>
         <ElCollapseItem title='显示范围控制'>
           <div class="zoom-controls">
@@ -43,15 +43,60 @@
       <div ref="chartContainer" class="chart-container"></div>
       <div ref="resultChartContainer" class="chart-container" v-if="showResult"></div>
     </div>
+
+    <!-- 数据列选择对话框 -->
+    <el-dialog v-model="showColumnDialog" title="选择数据列" width="500px">
+      <el-form :model="columnForm" label-width="100px">
+        <el-form-item label="工作表">
+          <el-select v-model="columnForm.sheetName" placeholder="请选择工作表" @change="onSheetChange" style="width: 100%">
+            <el-option v-for="sheet in availableSheets" :key="sheet" :label="sheet" :value="sheet" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="是否有表头">
+          <el-select v-model="columnForm.hasHeader" placeholder="请选择" @change="onHeaderModeChange" style="width: 100%">
+            <el-option label="是" :value="true" />
+            <el-option label="否" :value="false" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="数据列">
+          <el-select v-model="columnForm.columnName" placeholder="请选择数据列" style="width: 100%"
+            :disabled="!columnForm.sheetName">
+            <el-option v-for="column in availableColumns" :key="column" :label="column" :value="column" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="数据名称">
+          <el-input v-model="columnForm.dataName" placeholder="请输入数据系列的显示名称" />
+        </el-form-item>
+
+        <el-form-item label="单位">
+          <el-input v-model="columnForm.unit" placeholder="请输入数据单位，如：°C、kPa等" />
+        </el-form-item>
+
+        <el-form-item label="数值格式">
+          <el-input v-model="columnForm.valueFormat" placeholder="可选，如：{value} °C" />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="showColumnDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmAddColumn">确认添加</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
-import { ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage } from 'element-plus'
+import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption } from 'element-plus'
 import type { UploadFile } from 'element-plus';
 import { generateContinuousData, generateTimeData } from '@/test';
+import * as XLSX from 'xlsx';
 
 interface dataSerie {
   name: string
@@ -70,32 +115,65 @@ interface transferOption {
 // 图表使用的颜色系列
 const colors = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#909399']
 
-const series = ref<transferOption[]>([
-  { key: 1, label: '示例数据：温度', disabled: false, serie: { name: '温度', data: [], yAxisName: '温度 (°C)', valueFormat: '{value} °C' } },
-  { key: 2, label: '示例数据：压力', disabled: false, serie: { name: '压力', data: [], yAxisName: '压力 (kPa)', valueFormat: '{value} kPa' } }
-]);
+const series = ref<transferOption[]>([]);
 
 // 数据配置常量
 let totalSeconds = 500
 let pointsPerSecond = 100
 let totalPoints = totalSeconds * pointsPerSecond
 
-// 生成测试数据
-const timeData = generateTimeData(totalSeconds, pointsPerSecond)
-const temperatureData = generateContinuousData(totalPoints, 25, 15) // 温度数据，基值25°C，变化幅度±15°C
-const pressureData = generateContinuousData(totalPoints, 101.3, 5) // 压力数据，基值101.3kPa，变化幅度±5kPa
-
-series.value[0].serie.data = temperatureData
-series.value[1].serie.data = pressureData
+let timeData: Array<string> = []
 
 const selectedSeries = ref<Array<number>>([]);
 
 const fileList = ref<UploadFile[]>([]);
 
+// Excel 相关的响应式变量
+let excelWorkbook: XLSX.WorkBook | null = null;
+const showColumnDialog = ref(false);
+const availableSheets = ref<string[]>([]);
+const selectedSheet = ref('');
+const availableColumns = ref<string[]>([]);
+const columnForm = ref({
+  sheetName: '',
+  columnName: '',
+  dataName: '',
+  unit: '',
+  valueFormat: '',
+  hasHeader: true // 默认有表头
+});
+
+const loading = ref(false);
+
 const handleFileChange = (file: UploadFile) => {
   if (file.raw) {
+    loading.value = true;
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: '文件处理中...',
+      background: 'rgba(0, 0, 0, 0.7)',
+    });
     const reader = new FileReader();
-    reader.readAsDataURL(file.raw);
+    reader.onload = (e) => {
+
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        excelWorkbook = XLSX.read(data, { type: 'array' });
+
+        // 获取工作表名称
+        availableSheets.value = excelWorkbook.SheetNames;
+
+        ElMessage.success(`文件上传成功！`);
+
+      } catch (error) {
+        ElMessage.error('文件读取失败，请确保文件格式正确');
+        console.error('Excel文件读取错误:', error);
+      } finally {
+        loading.value = false;
+        loadingInstance.close();
+      }
+    };
+    reader.readAsArrayBuffer(file.raw);
   }
   fileList.value = [file];
   return false; // 阻止自动上传
@@ -103,6 +181,10 @@ const handleFileChange = (file: UploadFile) => {
 
 const handleRemove = () => {
   fileList.value = [];
+  excelWorkbook = null;
+  availableSheets.value = [];
+  selectedSheet.value = '';
+  availableColumns.value = [];
 };
 
 const selectDataSerie = () => {
@@ -110,7 +192,165 @@ const selectDataSerie = () => {
     ElMessage.warning('请先上传数据文件');
     return;
   }
-}
+  if (!excelWorkbook) {
+    ElMessage.warning('文件未正确加载，请重新上传');
+    return;
+  }
+
+  // 重置表单
+  columnForm.value = {
+    sheetName: '',
+    columnName: '',
+    dataName: '',
+    unit: '',
+    valueFormat: '',
+    hasHeader: true
+  };
+
+  showColumnDialog.value = true;
+};
+
+// 当选择工作表时，获取该表的列名
+const onSheetChange = (sheetName: string) => {
+  if (!excelWorkbook || !sheetName) {
+    availableColumns.value = [];
+    return;
+  }
+
+  columnForm.value.sheetName = sheetName;
+  updateColumnNames();
+};
+
+// 当表头模式改变时，重新获取列名
+const onHeaderModeChange = () => {
+  if (columnForm.value.sheetName) {
+    updateColumnNames();
+  }
+};
+
+// 更新列名列表
+const updateColumnNames = () => {
+  const sheetName = columnForm.value.sheetName;
+  const hasHeader = columnForm.value.hasHeader;
+
+  if (!excelWorkbook || !sheetName) {
+    availableColumns.value = [];
+    return;
+  }
+
+  try {
+    const worksheet = excelWorkbook.Sheets[sheetName];
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+    const columns: string[] = [];
+
+    if (hasHeader) {
+      // 有表头：使用第一行作为列名
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col });
+        const cell = worksheet[cellAddress];
+        if (cell && cell.v) {
+          columns.push(cell.v.toString());
+        } else {
+          columns.push(`列${col + 1}`); // 如果没有列名，使用默认名称
+        }
+      }
+    } else {
+      // 无表头：使用列号作为列名
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        columns.push(`列${String.fromCharCode(65 + col)}`); // A, B, C...
+      }
+    }
+
+    availableColumns.value = columns;
+  } catch (error) {
+    ElMessage.error('读取工作表失败');
+    console.error('工作表读取错误:', error);
+  }
+};
+
+// 确认添加数据列
+const confirmAddColumn = () => {
+  const form = columnForm.value;
+
+  if (!form.sheetName || !form.columnName || !form.dataName || !form.unit) {
+    ElMessage.warning('请填写完整信息');
+    return;
+  }
+
+  if (!excelWorkbook) {
+    ElMessage.error('Excel文件未加载');
+    return;
+  }
+
+  try {
+    const worksheet = excelWorkbook.Sheets[form.sheetName];
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+
+    // 找到列索引
+    let columnIndex = -1;
+
+    if (form.hasHeader) {
+      // 有表头：在第一行中查找列名
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col });
+        const cell = worksheet[cellAddress];
+        const cellValue = cell && cell.v ? cell.v.toString() : `列${col + 1}`;
+        if (cellValue === form.columnName) {
+          columnIndex = col;
+          break;
+        }
+      }
+    } else {
+      // 无表头：根据列号查找
+      const colLetter = form.columnName.replace('列', '');
+      columnIndex = colLetter.charCodeAt(0) - 65; // A=0, B=1, C=2...
+    }
+
+    if (columnIndex === -1 || columnIndex < range.s.c || columnIndex > range.e.c) {
+      ElMessage.error('未找到指定列');
+      return;
+    }
+
+    // 读取列数据
+    const columnData: number[] = [];
+    const startRow = form.hasHeader ? 1 : 0; // 有表头则跳过第一行
+
+    for (let row = startRow; row <= range.e.r; row++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: row, c: columnIndex });
+      const cell = worksheet[cellAddress];
+      const value = cell && cell.v ? parseFloat(cell.v.toString()) : 0;
+      columnData.push(isNaN(value) ? 0 : value);
+    }
+
+    totalPoints = columnData.length;
+    totalSeconds = totalPoints / pointsPerSecond;
+    timeData = generateTimeData(totalSeconds, pointsPerSecond);
+    ElMessage.success(`检测到 ${columnData.length} 行数据，设置总时长为 ${totalSeconds} 秒`);
+
+    // 创建新的数据系列
+    const newSerie: transferOption = {
+      key: Date.now(), // 使用时间戳作为唯一key
+      label: `${form.dataName} (${form.sheetName})`,
+      disabled: false,
+      serie: {
+        name: form.dataName,
+        data: columnData,
+        yAxisName: `${form.dataName} (${form.unit})`,
+        valueFormat: form.valueFormat || `{value} ${form.unit}`
+      }
+    };
+
+    // 添加到系列列表
+    series.value.push(newSerie);
+
+    ElMessage.success(`成功添加数据列：${form.dataName}`);
+    showColumnDialog.value = false;
+
+  } catch (error) {
+    ElMessage.error('数据读取失败');
+    console.error('数据读取错误:', error);
+  }
+};
 
 // 根据数据系列生成完整的图表配置
 const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts.EChartsOption => {
@@ -215,6 +455,7 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts
     series: series.map((s, index) => ({
       name: s.name,
       type: 'line',
+      symbol: 'none',
       data: s.data,
       smooth: true,
       lineStyle: {
@@ -280,7 +521,7 @@ const updateDataZoom = () => {
 // 重置缩放
 const resetZoom = () => {
   startTime.value = 0
-  endTime.value = 50
+  endTime.value = Math.min(50, totalSeconds) // 确保不超过总时长
   updateDataZoom()
 }
 
@@ -320,8 +561,11 @@ const fillChart = () => {
 
   const chartData: dataSerie[] = selected.map(s => (s.serie));
 
+  // 重新生成时间数据（确保与当前totalSeconds匹配）
+  const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
+
   // 配置项
-  const option: echarts.EChartsOption = chartOptionFromSeries(chartData, timeData);
+  const option: echarts.EChartsOption = chartOptionFromSeries(chartData, currentTimeData);
 
   chartInstance.setOption(option, true)
 }
@@ -379,6 +623,12 @@ onUnmounted(() => {
   font-size: 16px;
   color: #666;
   white-space: nowrap;
+}
+
+.transfer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .time-input {
