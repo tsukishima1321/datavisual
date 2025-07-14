@@ -35,13 +35,48 @@
           </div>
         </ElCollapseItem>
         <ElCollapseItem title='数据修正'></ElCollapseItem>
-        <ElCollapseItem title='数据列比对'></ElCollapseItem>
+        <ElCollapseItem title='数据列比对'>
+          <div class="comparison-panel">
+            <div class="comparison-select">
+              <div class="select-group">
+                <label>数据列A:</label>
+                <el-select v-model="comparisonForm.seriesAKey" placeholder="请选择第一个数据列" style="width: 200px">
+                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label" :value="serie.key.toString()" />
+                </el-select>
+              </div>
+              <div class="select-group">
+                <label>数据列B:</label>
+                <el-select v-model="comparisonForm.seriesBKey" placeholder="请选择第二个数据列" style="width: 200px">
+                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label" :value="serie.key.toString()" />
+                </el-select>
+              </div>
+            </div>
+            <div class="comparison-operation">
+              <label>运算方式:</label>
+              <el-select v-model="comparisonForm.operation" placeholder="请选择运算方式" style="width: 150px">
+                <el-option label="A - B" value="subtract" />
+                <el-option label="B - A" value="reverseSubtract" />
+                <el-option label="A + B" value="add" />
+                <el-option label="A × B" value="multiply" />
+                <el-option label="A ÷ B" value="divide" />
+              </el-select>
+            </div>
+            <div class="comparison-result-name">
+              <label>结果名称:</label>
+              <el-input v-model="comparisonForm.resultName" placeholder="请输入结果系列名称" style="width: 200px" />
+            </div>
+            <div class="comparison-buttons">
+              <el-button type="primary" @click="performComparison" :disabled="!canPerformComparison">执行比对</el-button>
+              <el-button type="info" @click="clearComparisonResult" :disabled="!showResult">清除结果</el-button>
+            </div>
+          </div>
+        </ElCollapseItem>
         <ElCollapseItem title='数据列求导'></ElCollapseItem>
       </ElCollapse>
     </div>
     <div class="chartColumn">
       <div ref="chartContainer" class="chart-container"></div>
-      <div ref="resultChartContainer" class="chart-container" v-if="showResult"></div>
+      <div ref="resultChartContainer" class="chart-container" ></div>
     </div>
 
     <!-- 数据列选择对话框 -->
@@ -91,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import * as echarts from 'echarts'
 import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption } from 'element-plus'
 import type { UploadFile } from 'element-plus';
@@ -141,6 +176,14 @@ const columnForm = ref({
   unit: '',
   valueFormat: '',
   hasHeader: true // 默认有表头
+});
+
+// 数据列比对相关的响应式变量
+const comparisonForm = ref({
+  seriesAKey: '' as string,
+  seriesBKey: '' as string,
+  operation: 'subtract' as string,
+  resultName: '比对结果'
 });
 
 const loading = ref(false);
@@ -352,6 +395,116 @@ const confirmAddColumn = () => {
   }
 };
 
+// 数据列比对相关的计算属性
+const availableSeriesForComparison = computed(() => {
+  return series.value.filter(s => selectedSeries.value.includes(s.key));
+});
+
+const canPerformComparison = computed(() => {
+  return comparisonForm.value.seriesAKey && 
+         comparisonForm.value.seriesBKey && 
+         comparisonForm.value.seriesAKey !== comparisonForm.value.seriesBKey &&
+         comparisonForm.value.resultName.trim() !== '';
+});
+
+// 数据列比对相关的方法
+const performComparison = () => {
+  if (!canPerformComparison.value) {
+    ElMessage.warning('请选择两个不同的数据列并输入结果名称');
+    return;
+  }
+
+  const seriesAKey = parseInt(comparisonForm.value.seriesAKey);
+  const seriesBKey = parseInt(comparisonForm.value.seriesBKey);
+  
+  const seriesA = series.value.find(s => s.key === seriesAKey);
+  const seriesB = series.value.find(s => s.key === seriesBKey);
+
+  if (!seriesA || !seriesB) {
+    ElMessage.error('找不到选中的数据列');
+    return;
+  }
+
+  const dataA = seriesA.serie.data;
+  const dataB = seriesB.serie.data;
+
+  // 确保数据长度一致
+  const minLength = Math.min(dataA.length, dataB.length);
+  const resultData: number[] = [];
+
+  for (let i = 0; i < minLength; i++) {
+    let result = 0;
+    switch (comparisonForm.value.operation) {
+      case 'subtract':
+        result = dataA[i] - dataB[i];
+        break;
+      case 'reverseSubtract':
+        result = dataB[i] - dataA[i];
+        break;
+      case 'add':
+        result = dataA[i] + dataB[i];
+        break;
+      case 'multiply':
+        result = dataA[i] * dataB[i];
+        break;
+      case 'divide':
+        result = dataB[i] !== 0 ? dataA[i] / dataB[i] : 0;
+        break;
+      default:
+        result = dataA[i] - dataB[i];
+    }
+    resultData.push(result);
+  }
+
+  // 创建结果数据系列
+  const resultSerie: dataSerie = {
+    name: comparisonForm.value.resultName,
+    data: resultData,
+    yAxisName: `${comparisonForm.value.resultName}`,
+    valueFormat: '{value}'
+  };
+
+  console.log('Comparison result:', resultSerie);
+
+  // 显示结果图表
+  showResult.value = true;
+  
+  // 等待DOM更新后初始化结果图表
+  setTimeout(() => {
+    if (resultChartInstance && resultChartContainer.value) {
+      const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
+      const resultOption = chartOptionFromSeries([resultSerie], currentTimeData.slice(0, minLength));
+      resultChartInstance.setOption(resultOption, true);
+      
+      // 同步缩放状态
+      updateDataZoom();
+      
+      ElMessage.success(`比对完成：${seriesA.label} ${getOperationText(comparisonForm.value.operation)} ${seriesB.label}`);
+    } else {
+      ElMessage.error('结果图表初始化失败，请稍后重试');
+    }
+  }, 100);
+};
+
+const getOperationText = (operation: string): string => {
+  switch (operation) {
+    case 'subtract': return '-';
+    case 'reverseSubtract': return '(反向减法)';
+    case 'add': return '+';
+    case 'multiply': return '×';
+    case 'divide': return '÷';
+    default: return '-';
+  }
+};
+
+const clearComparisonResult = () => {
+  showResult.value = false;
+  if (resultChartInstance) {
+    resultChartInstance.clear();
+  }
+  ElMessage.info('已清除比对结果');
+};
+
 // 根据数据系列生成完整的图表配置
 const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts.EChartsOption => {
   return {
@@ -532,6 +685,8 @@ const initChart = () => {
   // 创建ECharts实例
   chartInstance = echarts.init(chartContainer.value)
 
+  resultChartInstance = echarts.init(resultChartContainer.value)
+
   chartInstance.on('dataZoom', (params) => {
     // 当手动缩放时，更新startTime和endTime控件
     const param = params as unknown as { start: number, end: number }
@@ -539,6 +694,25 @@ const initChart = () => {
     const end = param.end
     startTime.value = Math.round((start / 100) * totalSeconds * 100) / 100
     endTime.value = Math.round((end / 100) * totalSeconds * 100) / 100
+
+    // 缩放主图表时，同步结果图表
+    if (resultChartInstance) {
+      resultChartInstance.setOption({
+        dataZoom: [
+          {
+            type: 'inside',
+            start: start,
+            end: end
+          },
+          {
+            start: start,
+            end: end,
+            height: 30,
+            bottom: '2%'
+          }
+        ]
+      })
+    }
   })
 
   window.addEventListener('resize', handleResize)
@@ -575,6 +749,9 @@ const handleResize = () => {
   if (chartInstance) {
     chartInstance.resize()
   }
+  if (resultChartInstance) {
+    resultChartInstance.resize()
+  }
 }
 
 onMounted(() => {
@@ -599,7 +776,7 @@ onUnmounted(() => {
 }
 
 .control-panel {
-  width: 30vw;
+  width: 35vw;
   margin-bottom: 15px;
   padding: 5px;
 }
@@ -628,6 +805,59 @@ onUnmounted(() => {
 .transfer-panel {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+.comparison-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.comparison-select {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.select-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.select-group label {
+  min-width: 80px;
+  font-size: 14px;
+  color: #666;
+}
+
+.comparison-operation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.comparison-operation label {
+  min-width: 80px;
+  font-size: 14px;
+  color: #666;
+}
+
+.comparison-result-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.comparison-result-name label {
+  min-width: 80px;
+  font-size: 14px;
+  color: #666;
+}
+
+.comparison-buttons {
+  display: flex;
   gap: 10px;
 }
 
@@ -670,7 +900,8 @@ onUnmounted(() => {
 }
 
 .chart-container {
-  width: 65vw;
+  margin-bottom: 10px;
+  width: 60vw;
   height: calc(80vh - 80px);
   border: 1px solid #e6e6e6;
   border-radius: 8px;
@@ -681,7 +912,6 @@ onUnmounted(() => {
   margin-left: 20px;
   display: flex;
   flex-direction: column;
-  width: 65vw;
-  height: calc(80vh - 80px);
+  width: 60vw;
 }
 </style>
