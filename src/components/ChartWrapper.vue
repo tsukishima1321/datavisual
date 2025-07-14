@@ -1,8 +1,21 @@
 <template>
   <div class="chartwrapper">
     <div class="control-panel">
+      <el-upload class="upload-demo" drag :auto-upload="false" accept=".xlsx, .xls" v-model:file-list="fileList"
+        :limit="1" :on-change="handleFileChange" :on-remove="handleRemove">
+        <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+        <div class="el-upload__text">
+          拖曳或 <em>点击上传excel文件</em>
+        </div>
+      </el-upload>
       <ElCollapse expand-icon-position="left">
-        <ElCollapseItem title='数据列选择'></ElCollapseItem>
+        <ElCollapseItem title='数据列选择'>
+          <div class="transfer-panel">
+            <ElButton type="primary" @click="selectDataSerie">从表格中添加数据列</ElButton>
+            <el-transfer v-model="selectedSeries" :data="series" :titles="['可选数据列', '已选数据列']" />
+          </div>
+          <ElButton type="primary" @click="fillChart">更新图表</ElButton>
+        </ElCollapseItem>
         <ElCollapseItem title='显示范围控制'>
           <div class="zoom-controls">
             <div class="input-group">
@@ -36,7 +49,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
-import { ElCollapse, ElCollapseItem } from 'element-plus'
+import { ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage } from 'element-plus'
+import type { UploadFile } from 'element-plus';
+import { generateContinuousData, generateTimeData } from '@/test';
 
 interface dataSerie {
   name: string
@@ -45,10 +60,60 @@ interface dataSerie {
   valueFormat: string
 }
 
+interface transferOption {
+  key: number
+  label: string
+  disabled: boolean
+  serie: dataSerie
+}
+
+// 图表使用的颜色系列
 const colors = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#909399']
 
+const series = ref<transferOption[]>([
+  { key: 1, label: '示例数据：温度', disabled: false, serie: { name: '温度', data: [], yAxisName: '温度 (°C)', valueFormat: '{value} °C' } },
+  { key: 2, label: '示例数据：压力', disabled: false, serie: { name: '压力', data: [], yAxisName: '压力 (kPa)', valueFormat: '{value} kPa' } }
+]);
+
+// 数据配置常量
+let totalSeconds = 500
+let pointsPerSecond = 100
+let totalPoints = totalSeconds * pointsPerSecond
+
+// 生成测试数据
+const timeData = generateTimeData(totalSeconds, pointsPerSecond)
+const temperatureData = generateContinuousData(totalPoints, 25, 15) // 温度数据，基值25°C，变化幅度±15°C
+const pressureData = generateContinuousData(totalPoints, 101.3, 5) // 压力数据，基值101.3kPa，变化幅度±5kPa
+
+series.value[0].serie.data = temperatureData
+series.value[1].serie.data = pressureData
+
+const selectedSeries = ref<Array<number>>([]);
+
+const fileList = ref<UploadFile[]>([]);
+
+const handleFileChange = (file: UploadFile) => {
+  if (file.raw) {
+    const reader = new FileReader();
+    reader.readAsDataURL(file.raw);
+  }
+  fileList.value = [file];
+  return false; // 阻止自动上传
+};
+
+const handleRemove = () => {
+  fileList.value = [];
+};
+
+const selectDataSerie = () => {
+  if (fileList.value.length === 0) {
+    ElMessage.warning('请先上传数据文件');
+    return;
+  }
+}
+
 // 根据数据系列生成完整的图表配置
-const chartOptionFromSeries = (series: dataSerie[], timeData:string[]): echarts.EChartsOption => {
+const chartOptionFromSeries = (series: dataSerie[], timeData: string[]): echarts.EChartsOption => {
   return {
     tooltip: {
       trigger: 'axis',
@@ -58,16 +123,15 @@ const chartOptionFromSeries = (series: dataSerie[], timeData:string[]): echarts.
         fontSize: 12
       },
       formatter: (params: any) => {
-        let tooltipHtml = ''
-        tooltipHtml += `<div style="color:#fff;font-size:14px;margin-bottom:5px;">数据点信息</div>`
-        tooltipHtml += `<div style="color:#ccc;font-size:12px;margin-bottom:5px;">时间: ${params[0].name}</div>`
-        params.forEach((item: any) => {
-          const seriesData = series.find(s => s.name === item.seriesName)
-          if (seriesData) {
-            tooltipHtml += `<div style="color:${colors[item.seriesIndex]}">${item.marker} ${item.seriesName}: ${item.value}${seriesData.valueFormat}</div>`
-          }
-        })
-        return tooltipHtml
+        if (Array.isArray(params) && params.length > 0) {
+          const time = params[0].axisValue
+          let result = `时间: ${time}<br/>`
+          params.forEach((param: any) => {
+            result += `${param.marker}${param.seriesName}: ${param.value}<br/>`
+          })
+          return result
+        }
+        return ''
       }
     },
     legend: {
@@ -129,10 +193,10 @@ const chartOptionFromSeries = (series: dataSerie[], timeData:string[]): echarts.
     yAxis: series.map(s => ({
       type: 'value',
       name: s.yAxisName,
-      position: 'left',
+      position: series.indexOf(s) === 0 ? 'left' : 'right',
       axisLine: {
         lineStyle: {
-          color: colors[series.indexOf(s) % colors.length]
+          color: '#ddd'
         }
       },
       axisLabel: {
@@ -163,7 +227,7 @@ const chartOptionFromSeries = (series: dataSerie[], timeData:string[]): echarts.
       yAxisIndex: index
     })),
     animation: false, // 关闭动画
-    notmerge: true // 取消合并options实现图表实时更新
+    notMerge: true // 取消合并options实现图表实时更新
   }
 
 }
@@ -178,48 +242,9 @@ let resultChartInstance: echarts.ECharts | null = null
 const resultChartContainer = ref<HTMLDivElement>()
 const showResult = ref(false)
 
-// 数据配置常量
-const totalSeconds = 500
-const pointsPerSecond = 100
-const totalPoints = totalSeconds * pointsPerSecond
-
 // 控制数据显示范围的响应式变量
 const startTime = ref(0)
 const endTime = ref(50) // 默认显示前50秒
-
-// 生成连续的随机数据
-const generateContinuousData = (points: number, baseValue = 50, amplitude = 20) => {
-  const data: number[] = []
-  let currentValue = baseValue
-
-  for (let i = 0; i < points; i++) {
-    // 使用小幅随机变化，保持数据连续性
-    const change = (Math.random() - 0.5) * 2 // -1 到 1 的随机变化
-    currentValue += change
-
-    // 添加一些周期性变化和趋势
-    const time = i / points * 2 * Math.PI
-    const periodicComponent = Math.sin(time * 5) * amplitude * 0.3
-    const trendComponent = Math.sin(time * 0.5) * amplitude * 0.5
-
-    const finalValue = currentValue + periodicComponent + trendComponent
-    data.push(Number(finalValue.toFixed(2)))
-  }
-
-  return data
-}
-
-// 生成时间轴数据（100秒，每秒100个点，共10000个点）
-const generateTimeData = (totalSeconds: number, pointsPerSecond: number) => {
-  const timeData: string[] = []
-  for (let second = 0; second < totalSeconds; second++) {
-    for (let point = 0; point < pointsPerSecond; point++) {
-      const time = second + point / pointsPerSecond
-      timeData.push(time.toFixed(2) + 's')
-    }
-  }
-  return timeData
-}
 
 // 更新数据缩放范围
 const updateDataZoom = () => {
@@ -266,39 +291,6 @@ const initChart = () => {
   // 创建ECharts实例
   chartInstance = echarts.init(chartContainer.value)
 
-  // 生成数据
-  const timeData = generateTimeData(totalSeconds, pointsPerSecond)
-  const temperatureData = generateContinuousData(totalPoints, 25, 15) // 温度数据，基值25°C，变化幅度±15°C
-  const pressureData = generateContinuousData(totalPoints, 101.3, 5) // 压力数据，基值101.3kPa，变化幅度±5kPa
-
-  // 计算初始显示范围的百分比
-  const startPercent = (startTime.value / totalSeconds) * 100
-  const endPercent = (endTime.value / totalSeconds) * 100
-
-  const chartData: dataSerie[] = [
-  {
-    name: '温度',
-    data: [],
-    yAxisName: '温度 (°C)',
-    valueFormat: '{value} °C'
-  },
-  {
-    name: '压力',
-    data: [],
-    yAxisName: '压力 (kPa)',
-    valueFormat: '{value} kPa'
-  }
-]
-
-  // 填充数据
-  chartData[0].data = temperatureData
-  chartData[1].data = pressureData
-
-  // 配置项
-  const option: echarts.EChartsOption = chartOptionFromSeries(chartData, timeData);
-
-    chartInstance.setOption(option)
-
   chartInstance.on('dataZoom', (params) => {
     // 当手动缩放时，更新startTime和endTime控件
     const param = params as unknown as { start: number, end: number }
@@ -309,6 +301,29 @@ const initChart = () => {
   })
 
   window.addEventListener('resize', handleResize)
+}
+
+const fillChart = () => {
+  if (!chartInstance) return
+
+  let selected = series.value.map(s => ({
+    key: s.key,
+    label: s.label,
+    disabled: s.disabled,
+    serie: s.serie
+  })).filter(s => selectedSeries.value.includes(s.key))
+  console.log('Selected series:', selected)
+  if (selected.length === 0) {
+    ElMessage.warning('请选择至少一个数据列');
+    return;
+  }
+
+  const chartData: dataSerie[] = selected.map(s => (s.serie));
+
+  // 配置项
+  const option: echarts.EChartsOption = chartOptionFromSeries(chartData, timeData);
+
+  chartInstance.setOption(option, true)
 }
 
 // 处理窗口大小变化
