@@ -34,7 +34,45 @@
             </span>
           </div>
         </ElCollapseItem>
-        <ElCollapseItem title='数据修正'></ElCollapseItem>
+        <ElCollapseItem title='数据列修正'>
+          <div class="data-correction-panel">
+            <div class="correction-select">
+              <label>选择数据列:</label>
+              <el-select v-model="correctionForm.seriesKey" placeholder="请选择要修正的数据列" style="width: 250px">
+                <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label" :value="serie.key.toString()" />
+              </el-select>
+            </div>
+            <div class="correction-operation">
+              <label>修正方式:</label>
+              <el-select v-model="correctionForm.operation" placeholder="请选择修正方式" style="width: 150px">
+                <el-option label="加法 (+)" value="add" />
+                <el-option label="减法 (-)" value="subtract" />
+                <el-option label="乘法 (×)" value="multiply" />
+                <el-option label="除法 (÷)" value="divide" />
+              </el-select>
+            </div>
+            <div class="correction-value">
+              <label>修正值:</label>
+              <el-input-number v-model="correctionForm.value" :precision="6" :step="0.1" style="width: 200px" placeholder="请输入修正值" />
+            </div>
+            <div class="correction-apply-mode">
+              <label>应用方式:</label>
+              <el-radio-group v-model="correctionForm.applyMode">
+                <el-radio value="replace">替换原数据</el-radio>
+                <el-radio value="new">保存为新数据</el-radio>
+              </el-radio-group>
+            </div>
+            <div class="correction-new-name" v-if="correctionForm.applyMode === 'new'">
+              <label>新数据名称:</label>
+              <el-input v-model="correctionForm.newName" placeholder="请输入新数据系列名称" style="width: 200px" />
+            </div>
+            <div class="correction-buttons">
+              <el-button type="primary" @click="performCorrection" :disabled="!canPerformCorrection">执行修正</el-button>
+              <el-button type="warning" @click="previewCorrection" :disabled="!canPerformCorrection">预览效果</el-button>
+              <el-button type="info" @click="clearCorrectionPreview" :disabled="!showCorrectionPreview">清除预览</el-button>
+            </div>
+          </div>
+        </ElCollapseItem>
         <ElCollapseItem title='数据列比对'>
           <div class="comparison-panel">
             <div class="comparison-select">
@@ -67,6 +105,7 @@
             </div>
             <div class="comparison-buttons">
               <el-button type="primary" @click="performComparison" :disabled="!canPerformComparison">执行比对</el-button>
+              <el-button type="success" @click="saveComparisonResult" :disabled="!showResult">保存结果</el-button>
               <el-button type="info" @click="clearComparisonResult" :disabled="!showResult">清除结果</el-button>
             </div>
           </div>
@@ -76,7 +115,7 @@
     </div>
     <div class="chartColumn">
       <div ref="chartContainer" class="chart-container"></div>
-      <div ref="resultChartContainer" class="chart-container" ></div>
+      <div ref="resultChartContainer" class="chart-container"></div>
     </div>
 
     <!-- 数据列选择对话框 -->
@@ -128,7 +167,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import * as echarts from 'echarts'
-import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption } from 'element-plus'
+import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElRadio, ElRadioGroup } from 'element-plus'
 import type { UploadFile } from 'element-plus';
 import { generateContinuousData, generateTimeData } from '@/test';
 import * as XLSX from 'xlsx';
@@ -185,6 +224,22 @@ const comparisonForm = ref({
   operation: 'subtract' as string,
   resultName: '比对结果'
 });
+
+// 存储当前比对结果
+const currentComparisonResult = ref<dataSerie | null>(null);
+
+// 数据列修正相关的响应式变量
+const correctionForm = ref({
+  seriesKey: '' as string,
+  operation: 'add' as string,
+  value: 0 as number,
+  applyMode: 'new' as string, // 'replace' | 'new'
+  newName: '修正后数据'
+});
+
+// 修正预览相关
+const showCorrectionPreview = ref(false);
+const currentCorrectionPreview = ref<dataSerie | null>(null);
 
 const loading = ref(false);
 
@@ -464,6 +519,9 @@ const performComparison = () => {
     valueFormat: '{value}'
   };
 
+  // 保存当前比对结果
+  currentComparisonResult.value = resultSerie;
+
   console.log('Comparison result:', resultSerie);
 
   // 显示结果图表
@@ -499,10 +557,189 @@ const getOperationText = (operation: string): string => {
 
 const clearComparisonResult = () => {
   showResult.value = false;
+  currentComparisonResult.value = null;
+  
+  // 如果没有修正预览在显示，则清空图表
+  if (!showCorrectionPreview.value) {
+    if (resultChartInstance) {
+      resultChartInstance.clear();
+    }
+  }
+  
+  ElMessage.info('已清除比对结果');
+};
+
+const saveComparisonResult = () => {
+  if (!currentComparisonResult.value) {
+    ElMessage.warning('没有可保存的比对结果');
+    return;
+  }
+
+  // 检查是否已存在同名的数据系列
+  const existingSerie = series.value.find(s => s.serie.name === currentComparisonResult.value!.name);
+  if (existingSerie) {
+    ElMessage.warning('已存在同名的数据系列，请修改结果名称后重新执行比对');
+    return;
+  }
+
+  // 创建新的传输选项
+  const newTransferOption: transferOption = {
+    key: Date.now(), // 使用时间戳作为唯一key
+    label: `${currentComparisonResult.value.name} (比对结果)`,
+    disabled: false,
+    serie: { ...currentComparisonResult.value }
+  };
+
+  // 添加到系列列表
+  series.value.push(newTransferOption);
+
+  ElMessage.success(`比对结果已保存为数据系列：${currentComparisonResult.value.name}`);
+};
+
+// 数据列修正相关的计算属性
+const canPerformCorrection = computed(() => {
+  return correctionForm.value.seriesKey && 
+         correctionForm.value.operation && 
+         correctionForm.value.value !== undefined &&
+         (correctionForm.value.applyMode === 'replace' || 
+          (correctionForm.value.applyMode === 'new' && correctionForm.value.newName.trim() !== ''));
+});
+
+// 数据列修正相关的方法
+const performCorrection = () => {
+  if (!canPerformCorrection.value) {
+    ElMessage.warning('请完善修正参数');
+    return;
+  }
+
+  const seriesKey = parseInt(correctionForm.value.seriesKey);
+  const targetSerie = series.value.find(s => s.key === seriesKey);
+
+  if (!targetSerie) {
+    ElMessage.error('找不到选中的数据列');
+    return;
+  }
+
+  // 执行修正计算
+  const correctedData = applyCorrectionToData(targetSerie.serie.data, correctionForm.value.operation, correctionForm.value.value);
+
+  if (correctionForm.value.applyMode === 'replace') {
+    // 替换原数据
+    targetSerie.serie.data = correctedData;
+    ElMessage.success(`已修正数据列：${targetSerie.label}`);
+    
+    // 如果该数据列当前被选中显示，则更新图表
+    if (selectedSeries.value.includes(seriesKey)) {
+      fillChart();
+    }
+  } else {
+    // 保存为新数据
+    const existingSerie = series.value.find(s => s.serie.name === correctionForm.value.newName);
+    if (existingSerie) {
+      ElMessage.warning('已存在同名的数据系列，请修改名称');
+      return;
+    }
+
+    const newSerie: transferOption = {
+      key: Date.now(),
+      label: `${correctionForm.value.newName} (修正结果)`,
+      disabled: false,
+      serie: {
+        name: correctionForm.value.newName,
+        data: correctedData,
+        yAxisName: targetSerie.serie.yAxisName,
+        valueFormat: targetSerie.serie.valueFormat
+      }
+    };
+
+    series.value.push(newSerie);
+    ElMessage.success(`修正结果已保存为新数据系列：${correctionForm.value.newName}`);
+  }
+
+  // 清除预览
+  clearCorrectionPreview();
+};
+
+const previewCorrection = () => {
+  if (!canPerformCorrection.value) {
+    ElMessage.warning('请完善修正参数');
+    return;
+  }
+
+  const seriesKey = parseInt(correctionForm.value.seriesKey);
+  const targetSerie = series.value.find(s => s.key === seriesKey);
+
+  if (!targetSerie) {
+    ElMessage.error('找不到选中的数据列');
+    return;
+  }
+
+  // 执行修正计算
+  const correctedData = applyCorrectionToData(targetSerie.serie.data, correctionForm.value.operation, correctionForm.value.value);
+
+  // 创建预览数据系列
+  const previewSerie: dataSerie = {
+    name: `${targetSerie.serie.name} (预览)`,
+    data: correctedData,
+    yAxisName: `${targetSerie.serie.yAxisName} (预览)`,
+    valueFormat: targetSerie.serie.valueFormat
+  };
+
+  currentCorrectionPreview.value = previewSerie;
+  showCorrectionPreview.value = true;
+
+  // 显示预览图表
+  setTimeout(() => {
+    if (resultChartInstance && resultChartContainer.value) {
+      const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
+      const previewOption = chartOptionFromSeries([previewSerie], currentTimeData.slice(0, correctedData.length));
+      resultChartInstance.setOption(previewOption, true);
+      
+      // 同步缩放状态
+      updateDataZoom();
+      
+      ElMessage.success(`预览修正效果：${getOperationText(correctionForm.value.operation)} ${correctionForm.value.value}`);
+    } else {
+      ElMessage.error('预览图表初始化失败，请稍后重试');
+    }
+  }, 100);
+};
+
+const clearCorrectionPreview = () => {
+  showCorrectionPreview.value = false;
+  currentCorrectionPreview.value = null;
   if (resultChartInstance) {
     resultChartInstance.clear();
   }
-  ElMessage.info('已清除比对结果');
+  // 如果有比对结果正在显示，需要恢复
+  if (showResult.value && currentComparisonResult.value) {
+    setTimeout(() => {
+      if (resultChartInstance && resultChartContainer.value) {
+        const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
+        const resultOption = chartOptionFromSeries([currentComparisonResult.value!], currentTimeData.slice(0, currentComparisonResult.value!.data.length));
+        resultChartInstance.setOption(resultOption, true);
+        updateDataZoom();
+      }
+    }, 50);
+  }
+};
+
+// 应用修正计算的工具函数
+const applyCorrectionToData = (data: number[], operation: string, value: number): number[] => {
+  return data.map(item => {
+    switch (operation) {
+      case 'add':
+        return item + value;
+      case 'subtract':
+        return item - value;
+      case 'multiply':
+        return item * value;
+      case 'divide':
+        return value !== 0 ? item / value : item;
+      default:
+        return item;
+    }
+  });
 };
 
 // 根据数据系列生成完整的图表配置
@@ -857,6 +1094,77 @@ onUnmounted(() => {
 }
 
 .comparison-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.data-correction-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.correction-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.correction-select label {
+  min-width: 100px;
+  font-size: 14px;
+  color: #666;
+}
+
+.correction-operation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.correction-operation label {
+  min-width: 100px;
+  font-size: 14px;
+  color: #666;
+}
+
+.correction-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.correction-value label {
+  min-width: 100px;
+  font-size: 14px;
+  color: #666;
+}
+
+.correction-apply-mode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.correction-apply-mode label {
+  min-width: 100px;
+  font-size: 14px;
+  color: #666;
+}
+
+.correction-new-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.correction-new-name label {
+  min-width: 100px;
+  font-size: 14px;
+  color: #666;
+}
+
+.correction-buttons {
   display: flex;
   gap: 10px;
 }
