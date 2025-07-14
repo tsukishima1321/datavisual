@@ -1,24 +1,13 @@
-# visual
+# About
 
-## Project setup
-```
-yarn install
-```
+## Roadmap
 
-### Compiles and hot-reloads for development
-```
-yarn serve
-```
-
-### Compiles and minifies for production
-```
-yarn build
-```
-
-### Lints and fixes files
-```
-yarn lint
-```
-
-### Customize configuration
-See [Configuration Reference](https://cli.vuejs.org/config/).
+- [x] 基本绘图
+- [x] 支持数据范围控制
+- [x] 多系列数据同x轴绘图
+- [ ] 导入excel图表获取数据，选择数据列
+- [ ] 数据修正功能：对原数据进行简单的加减修正
+- [ ] 曲线比对功能：对两条曲线进行比对，计算差值并绘制
+- [ ] 求导功能：对曲线进行求导，绘制导数曲线
+- [ ] 峰值检测功能：对曲线进行峰值检测，标记峰值点
+- [ ] 最大值检测功能：对曲线进行最大值检测，标记最大值及90%区间

@@ -1,10 +1,11 @@
 <template>
-  <nav>
-    <router-link to="/">Home</router-link> |
-    <router-link to="/about">About</router-link>
-  </nav>
+  <Head />
   <router-view/>
 </template>
+
+<script setup lang="ts">
+import Head from './components/Head.vue';
+</script>
 
 <style>
 #app {
