@@ -141,7 +141,7 @@
               </div>
             </ElCollapseItem>
             <ElCollapseItem title="峰值搜索">
-              <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列" style="width: 250px">
+              <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列" style="width: 250px;margin-right: 5px;">
                 <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
                   :value="serie.key.toString()" />
               </el-select>
@@ -155,6 +155,15 @@
                     峰值{{ idx + 1 }}：位置 {{ (peak / 100).toFixed(2) }} 秒
                   </li>
                 </ul>
+                <div class="analysis-row">
+                <label>当前高亮峰值：{{ currentHighlightPeak! + 1 }} </label>
+                <ElButton
+                  @click="{currentHighlightPeak = (currentHighlightPeak! - 1 + peakSearchResult.length) % peakSearchResult.length;highlightPeakSearch()}">
+                  上一个峰值</ElButton>
+                <ElButton @click="{currentHighlightPeak = (currentHighlightPeak! + 1) % peakSearchResult.length; highlightPeakSearch()}">下一个峰值
+                </ElButton>
+                </div>
+
               </div>
             </ElCollapseItem>
           </ElCollapse>
@@ -807,7 +816,7 @@ const applyCorrectionToData = (data: number[], operation: string, value: number)
 };
 
 // 根据数据系列生成完整的图表配置
-const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highlightRange?: Array<{ start: number, end: number }>): echarts.EChartsOption => {
+const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highlightRange?: { start: number, end: number }): echarts.EChartsOption => {
   const option: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
@@ -930,11 +939,9 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highligh
   if (highlightRange && series.length > 0) {
     // 创建标记数组，用于visualMap
     const markData = new Array(series[0].data.length).fill(0);
-    for (let range of highlightRange) {
-      for (let i = range.start; i <= range.end; i++) {
-        if (i >= 0 && i < markData.length) {
-          markData[i] = 1;
-        }
+    for (let i = highlightRange.start; i <= highlightRange.end; i++) {
+      if (i >= 0 && i < markData.length) {
+        markData[i] = 1;
       }
     }
 
@@ -980,15 +987,15 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highligh
         borderColor: 'rgba(255, 100, 100, 0.8)',
         borderWidth: 1
       },
-      data: highlightRange.map(range => [
+      data: [[
         {
-          xAxis: timeData[range.start],
+          xAxis: highlightRange.start,
           name: '分析结果区间'
         },
         {
-          xAxis: timeData[range.end]
+          xAxis: highlightRange.end
         }
-      ])
+      ]]
     };
   }
 
@@ -1013,7 +1020,7 @@ const highlightAnalysisRange = () => {
     end: maxResult.value.rangeEnd
   };
 
-  fillChart([highlightRange]);
+  fillChart(highlightRange);
   ElMessage.success('已高亮显示分析区间');
 }
 
@@ -1053,7 +1060,7 @@ const performAnalysisMaxRange = () => {
 
   // 如果分析的数据列在当前选中的系列中，则更新主图表以显示高亮区间
   if (selectedSeries.value.includes(parseInt(seriesKey))) {
-    fillChart([highlightRange]);
+    fillChart(highlightRange);
     ElMessage.success(`分析完成！已在图表中高亮显示 ${range}% 最大值区间`);
   } else {
     ElMessage.success(`分析完成！请在数据列选择中选中该数据列以查看高亮区间`);
@@ -1107,6 +1114,7 @@ const performPeakSearch = () => {
   peakSearchResult.value = peaks;
 }
 
+const currentHighlightPeak = ref<number>(0);
 const highlightPeakSearch = () => {
   if (peakSearchResult.value.length === 0) {
     ElMessage.warning('没有峰值搜索结果可以高亮');
@@ -1114,14 +1122,12 @@ const highlightPeakSearch = () => {
   }
 
   // 创建高亮范围
-  const highlightRanges = peakSearchResult.value.map((peakIndex, i) => {
-    return {
-      start: peakIndex - 5, // 高亮范围前后各5个点
-      end: peakIndex + 5
-    };
-  });
+  const highlightRange = {
+    start: peakSearchResult.value[currentHighlightPeak.value] - 50,
+    end: peakSearchResult.value[currentHighlightPeak.value] + 50
+  };
 
-  fillChart(highlightRanges);
+  fillChart(highlightRange);
   ElMessage.success('已高亮显示峰值搜索结果区间');
 }
 
@@ -1225,7 +1231,7 @@ const initChart = () => {
   window.addEventListener('resize', handleResize)
 }
 
-const fillChart = (highlightRange?: Array<{ start: number, end: number }>) => {
+const fillChart = (highlightRange?: { start: number, end: number }) => {
   if (!chartInstance) return
 
   let selected = series.value.map(s => ({
@@ -1278,6 +1284,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+label {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
 .chartwrapper {
   display: flex;
   flex-direction: row;
