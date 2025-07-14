@@ -140,7 +140,23 @@
                 </div>
               </div>
             </ElCollapseItem>
-            <ElCollapseItem title="峰值搜索"></ElCollapseItem>
+            <ElCollapseItem title="峰值搜索">
+              <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列" style="width: 250px">
+                <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
+                  :value="serie.key.toString()" />
+              </el-select>
+              <ElButton type="primary" @click="performPeakSearch">执行峰值搜索</ElButton>
+              <ElButton type="success" @click="highlightPeakSearch" :disabled="!peakSearchResult">高亮峰值</ElButton>
+              <ElButton type="info" @click="clearPeakSearchResult">清除峰值结果</ElButton>
+              <div class="peak-search-result" v-if="peakSearchResult && peakSearchResult.length">
+                <p>共检测到 {{ peakSearchResult.length }} 个峰值：</p>
+                <ul>
+                  <li v-for="(peak, idx) in peakSearchResult" :key="idx">
+                    峰值{{ idx + 1 }}：位置 {{ (peak / 100).toFixed(2) }} 秒
+                  </li>
+                </ul>
+              </div>
+            </ElCollapseItem>
           </ElCollapse>
         </ElCollapseItem>
       </ElCollapse>
@@ -202,7 +218,7 @@ import * as echarts from 'echarts'
 import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElRadio, ElRadioGroup } from 'element-plus'
 import type { UploadFile } from 'element-plus';
 import { generateContinuousData, generateTimeData } from '@/test';
-import { findMaxRange, maxRangeResult } from '@/analyse';
+import { findMaxRange, maxRangeResult, AMPD } from '@/analyse';
 import * as XLSX from 'xlsx';
 
 interface dataSerie {
@@ -281,6 +297,8 @@ const analysisForm = ref({
 });
 
 const maxResult = ref<maxRangeResult | null>(null);
+
+const peakSearchResult = ref<number[]>([]);
 
 const loading = ref(false);
 
@@ -454,14 +472,19 @@ const confirmAddColumn = () => {
     const columnData: number[] = [];
     const startRow = form.hasHeader ? 1 : 0; // 有表头则跳过第一行
 
-    for (let row = startRow; row <= range.e.r; row++) {
+    let row = startRow;
+    for (; row <= range.e.r; row++) {
       const cellAddress = XLSX.utils.encode_cell({ r: row, c: columnIndex });
       const cell = worksheet[cellAddress];
       const value = cell && cell.v ? parseFloat(cell.v.toString()) : 0;
+      if (cell.t != 'n' && cell.t != 's') {
+        ElMessage.warning(`第 ${row + 1} 行数据无效，已跳过此后所有数据`);
+        break;
+      }
       columnData.push(isNaN(value) ? 0 : value);
     }
 
-    totalPoints = columnData.length;
+    totalPoints = row - startRow; // 计算实际数据点数量
     totalSeconds = totalPoints / pointsPerSecond;
     timeData = generateTimeData(totalSeconds, pointsPerSecond);
     ElMessage.success(`检测到 ${columnData.length} 行数据，设置总时长为 ${totalSeconds} 秒`);
@@ -784,7 +807,7 @@ const applyCorrectionToData = (data: number[], operation: string, value: number)
 };
 
 // 根据数据系列生成完整的图表配置
-const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highlightRange?: { start: number, end: number }): echarts.EChartsOption => {
+const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highlightRange?: Array<{ start: number, end: number }>): echarts.EChartsOption => {
   const option: echarts.EChartsOption = {
     tooltip: {
       trigger: 'axis',
@@ -798,7 +821,7 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highligh
           const time = params[0].axisValue
           let result = `时间: ${time}<br/>`
           params.forEach((param: any) => {
-            if(param.seriesName == 'highlight-helper') return; // 跳过辅助系列
+            if (param.seriesName == 'highlight-helper') return; // 跳过辅助系列
             result += `${param.marker}${param.seriesName}: ${param.value}<br/>`
           })
           return result
@@ -907,9 +930,11 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highligh
   if (highlightRange && series.length > 0) {
     // 创建标记数组，用于visualMap
     const markData = new Array(series[0].data.length).fill(0);
-    for (let i = highlightRange.start; i <= highlightRange.end; i++) {
-      if (i >= 0 && i < markData.length) {
-        markData[i] = 1;
+    for (let range of highlightRange) {
+      for (let i = range.start; i <= range.end; i++) {
+        if (i >= 0 && i < markData.length) {
+          markData[i] = 1;
+        }
       }
     }
 
@@ -955,15 +980,15 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highligh
         borderColor: 'rgba(255, 100, 100, 0.8)',
         borderWidth: 1
       },
-      data: [[
+      data: highlightRange.map(range => [
         {
-          xAxis: highlightRange.start,
+          xAxis: timeData[range.start],
           name: '分析结果区间'
         },
         {
-          xAxis: highlightRange.end
+          xAxis: timeData[range.end]
         }
-      ]]
+      ])
     };
   }
 
@@ -988,7 +1013,7 @@ const highlightAnalysisRange = () => {
     end: maxResult.value.rangeEnd
   };
 
-  fillChart(highlightRange);
+  fillChart([highlightRange]);
   ElMessage.success('已高亮显示分析区间');
 }
 
@@ -1028,12 +1053,85 @@ const performAnalysisMaxRange = () => {
 
   // 如果分析的数据列在当前选中的系列中，则更新主图表以显示高亮区间
   if (selectedSeries.value.includes(parseInt(seriesKey))) {
-    fillChart(highlightRange);
+    fillChart([highlightRange]);
     ElMessage.success(`分析完成！已在图表中高亮显示 ${range}% 最大值区间`);
   } else {
     ElMessage.success(`分析完成！请在数据列选择中选中该数据列以查看高亮区间`);
   }
 }
+
+const performPeakSearch = () => {
+  const seriesKey = analysisForm.value.seriesKey;
+
+  if (!seriesKey) {
+    ElMessage.warning('请选择数据列');
+    return;
+  }
+
+  const targetSerie = series.value.find(s => s.key === parseInt(seriesKey));
+  if (!targetSerie) {
+    ElMessage.error('找不到选中的数据列');
+    return;
+  }
+
+  let data: Array<number> = []
+  // 如果数据点超过1000个，则先进行采样
+  // 记录采样比
+  let samplingRatio = 1;
+  if (targetSerie.serie.data.length > 1000) {
+    // 采样5000个数据点
+    const sampleSize = 1000;
+    const step = Math.ceil(targetSerie.serie.data.length / sampleSize);
+    samplingRatio = step;
+    for (let i = 0; i < targetSerie.serie.data.length; i += step) {
+      data.push(targetSerie.serie.data[i]);
+    }
+  } else {
+    data = targetSerie.serie.data.slice(); // 直接使用原数据
+  }
+
+  // 执行峰值搜索
+  const peaks = AMPD(data);
+  if (peaks.length === 0) {
+    ElMessage.error('未找到符合条件的峰值');
+    return;
+  }
+
+  // 如果有采样比，则将峰值索引转换为原数据的索引
+  if (samplingRatio > 1) {
+    for (let i = 0; i < peaks.length; i++) {
+      peaks[i] *= samplingRatio;
+    }
+  }
+
+  peakSearchResult.value = peaks;
+}
+
+const highlightPeakSearch = () => {
+  if (peakSearchResult.value.length === 0) {
+    ElMessage.warning('没有峰值搜索结果可以高亮');
+    return;
+  }
+
+  // 创建高亮范围
+  const highlightRanges = peakSearchResult.value.map((peakIndex, i) => {
+    return {
+      start: peakIndex - 5, // 高亮范围前后各5个点
+      end: peakIndex + 5
+    };
+  });
+
+  fillChart(highlightRanges);
+  ElMessage.success('已高亮显示峰值搜索结果区间');
+}
+
+const clearPeakSearchResult = () => {
+  peakSearchResult.value = [];
+  // 清除高亮，重新绘制图表
+  fillChart();
+  ElMessage.info('已清除峰值搜索结果');
+}
+
 
 // 图表实例
 let chartInstance: echarts.ECharts | null = null
@@ -1127,7 +1225,7 @@ const initChart = () => {
   window.addEventListener('resize', handleResize)
 }
 
-const fillChart = (highlightRange?: { start: number, end: number }) => {
+const fillChart = (highlightRange?: Array<{ start: number, end: number }>) => {
   if (!chartInstance) return
 
   let selected = series.value.map(s => ({
