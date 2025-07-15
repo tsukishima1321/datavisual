@@ -11,9 +11,9 @@
       <ElCollapse expand-icon-position="left">
         <ElCollapseItem title='数据列选择'>
           <div class="transfer-panel">
-            <ElButton type="primary" @click="selectDataSerie">从表格中添加数据列</ElButton>
+            <ElButton type="primary" @click="selectDataSerie" style="margin-right: auto;">从表格中添加数据列</ElButton>
             <el-transfer v-model="selectedSeries" :data="series" :titles="['可选数据列', '已选数据列']" />
-            <ElButton type="primary" @click="updateChart">更新图表</ElButton>
+            <ElButton type="primary" @click="updateChart" style="margin-right: auto;">更新图表</ElButton>
           </div>
         </ElCollapseItem>
         <ElCollapseItem title='显示范围控制'>
@@ -50,9 +50,10 @@
                 <el-option label="减法 (-)" value="subtract" />
                 <el-option label="乘法 (×)" value="multiply" />
                 <el-option label="除法 (÷)" value="divide" />
+                <el-option label="求导" value="derivative" />
               </el-select>
             </div>
-            <div class="correction-value">
+            <div class="correction-value" v-if="correctionForm.operation !== 'derivative'">
               <label>修正值:</label>
               <el-input-number v-model="correctionForm.value" :precision="6" :step="0.1" style="width: 200px"
                 placeholder="请输入修正值" />
@@ -114,7 +115,6 @@
             </div>
           </div>
         </ElCollapseItem>
-        <ElCollapseItem title='数据列求导'></ElCollapseItem>
         <ElCollapseItem title='数据分析'>
           <ElCollapse>
             <ElCollapseItem title="最值和区间">
@@ -141,7 +141,8 @@
               </div>
             </ElCollapseItem>
             <ElCollapseItem title="峰值搜索">
-              <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列" style="width: 250px;margin-right: 5px;">
+              <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列"
+                style="width: 250px;margin-right: 5px;">
                 <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
                   :value="serie.key.toString()" />
               </el-select>
@@ -156,12 +157,14 @@
                   </li>
                 </ul>
                 <div class="analysis-row">
-                <label>当前高亮峰值：{{ currentHighlightPeak! + 1 }} </label>
-                <ElButton
-                  @click="{currentHighlightPeak = (currentHighlightPeak! - 1 + peakSearchResult.length) % peakSearchResult.length;highlightPeakSearch()}">
-                  上一个峰值</ElButton>
-                <ElButton @click="{currentHighlightPeak = (currentHighlightPeak! + 1) % peakSearchResult.length; highlightPeakSearch()}">下一个峰值
-                </ElButton>
+                  <label>当前高亮峰值：{{ currentHighlightPeak! + 1 }} </label>
+                  <ElButton
+                    @click="{ currentHighlightPeak = (currentHighlightPeak! - 1 + peakSearchResult.length) % peakSearchResult.length; highlightPeakSearch() }">
+                    上一个峰值</ElButton>
+                  <ElButton
+                    @click="{ currentHighlightPeak = (currentHighlightPeak! + 1) % peakSearchResult.length; highlightPeakSearch() }">
+                    下一个峰值
+                  </ElButton>
                 </div>
 
               </div>
@@ -227,7 +230,7 @@ import * as echarts from 'echarts'
 import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElRadio, ElRadioGroup } from 'element-plus'
 import type { UploadFile } from 'element-plus';
 import { generateContinuousData, generateTimeData } from '@/test';
-import { findMaxRange, maxRangeResult, AMPD } from '@/analyse';
+import { findMaxRange, maxRangeResult, AMPD, derivative } from '@/analyse';
 import * as XLSX from 'xlsx';
 
 interface dataSerie {
@@ -438,7 +441,7 @@ const updateColumnNames = () => {
 const confirmAddColumn = () => {
   const form = columnForm.value;
 
-  if (!form.sheetName || !form.columnName || !form.dataName || !form.unit) {
+  if (!form.sheetName || !form.columnName || !form.dataName) {
     ElMessage.warning('请填写完整信息');
     return;
   }
@@ -799,20 +802,25 @@ const clearCorrectionPreview = () => {
 
 // 应用修正计算的工具函数
 const applyCorrectionToData = (data: number[], operation: string, value: number): number[] => {
-  return data.map(item => {
-    switch (operation) {
-      case 'add':
-        return item + value;
-      case 'subtract':
-        return item - value;
-      case 'multiply':
-        return item * value;
-      case 'divide':
-        return value !== 0 ? item / value : item;
-      default:
-        return item;
-    }
-  });
+  if (operation === 'derivative') {
+    // 求导操作
+    return derivative(data,pointsPerSecond)
+  } else {
+    return data.map(item => {
+      switch (operation) {
+        case 'add':
+          return item + value;
+        case 'subtract':
+          return item - value;
+        case 'multiply':
+          return item * value;
+        case 'divide':
+          return value !== 0 ? item / value : item;
+        default:
+          return item;
+      }
+    });
+  }
 };
 
 // 根据数据系列生成完整的图表配置
@@ -1068,6 +1076,13 @@ const performAnalysisMaxRange = () => {
 }
 
 const performPeakSearch = () => {
+  loading.value = true;
+  const loadingInstance = ElLoading.service({
+    lock: true,
+    text: '处理中...',
+    background: 'rgba(0, 0, 0, 0.7)',
+  });
+
   const seriesKey = analysisForm.value.seriesKey;
 
   if (!seriesKey) {
@@ -1082,12 +1097,12 @@ const performPeakSearch = () => {
   }
 
   let data: Array<number> = []
-  // 如果数据点超过1000个，则先进行采样
+  // 如果数据点超过3000个，则先进行采样
   // 记录采样比
   let samplingRatio = 1;
-  if (targetSerie.serie.data.length > 1000) {
-    // 采样5000个数据点
-    const sampleSize = 1000;
+  if (targetSerie.serie.data.length > 3000) {
+    // 采样1=3000个数据点
+    const sampleSize = 3000;
     const step = Math.ceil(targetSerie.serie.data.length / sampleSize);
     samplingRatio = step;
     for (let i = 0; i < targetSerie.serie.data.length; i += step) {
@@ -1111,7 +1126,12 @@ const performPeakSearch = () => {
     }
   }
 
+  loading.value = false;
+  loadingInstance.close();
+
   peakSearchResult.value = peaks;
+
+  highlightPeakSearch();
 }
 
 const currentHighlightPeak = ref<number>(0);
@@ -1248,16 +1268,13 @@ const fillChart = (highlightRange?: { start: number, end: number }) => {
 
   const chartData: dataSerie[] = selected.map(s => (s.serie));
 
-  // 重新生成时间数据（确保与当前totalSeconds匹配）
   const currentTimeData = generateTimeData(totalSeconds, pointsPerSecond);
 
-  // 配置项
   const option: echarts.EChartsOption = chartOptionFromSeries(chartData, currentTimeData, highlightRange);
 
   chartInstance.setOption(option, true)
 }
 
-// 模板中使用的更新图表函数
 const updateChart = () => {
   fillChart();
 }

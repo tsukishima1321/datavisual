@@ -5,6 +5,12 @@ export interface maxRangeResult {
     rangeEnd: number;
 }
 
+/**
+ * 查找数据中最大值及其索引，并返回该最大值在指定范围内的起始和结束索引
+ * @param data 1-D number array
+ * @param range 范围百分比
+ * @returns 包含最大值、最大值索引、范围起始索引和范围结束索引的对象
+ */
 export const findMaxRange = (data: number[], range: number): maxRangeResult => {
     if (data.length === 0 || range <= 0 || range >= 100) {
         return { maxValue: 0, maxValueIndex: -1, rangeStart: -1, rangeEnd: -1 };
@@ -49,7 +55,7 @@ export const findMaxRange = (data: number[], range: number): maxRangeResult => {
 }
 
 /**
- * 实现AMPD算法
+ * 实现AMPD算法，搜索一维数组中的波峰
  * @param data 1-D number array
  * @returns 波峰所在索引值的数组
  */
@@ -91,4 +97,27 @@ export const AMPD = (data: number[]): number[] => {
     }
 
     return peaks;
+}
+
+/**
+ * 用中心差分法计算一维数组的导数
+ * @param data 1-D number array
+ * @returns 求导后的数组
+ * */
+export const derivative = (data: number[], pointsPerSecond: number): number[] => {
+    const result: number[] = [];
+    const count = data.length;
+    if (count < 2) {
+        return result; // 如果数据点少于2个，无法计算导数
+    }
+    for (let i = 0; i < count; i++) {
+        if (i === 0) {
+            result.push((data[i + 1] - data[i]) * pointsPerSecond);
+        } else if (i === count - 1) {
+            result.push((data[i] - data[i - 1]) * pointsPerSecond);
+        } else {
+            result.push(((data[i + 1] - data[i - 1]) / 2) * pointsPerSecond);
+        }
+    }
+    return result;
 }
