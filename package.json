@@ -2,25 +2,86 @@
   "name": "visual",
   "version": "0.1.0",
   "private": true,
+  "main": "electron.js",
+  "homepage": "./",
   "scripts": {
     "serve": "vue-cli-service serve",
-    "build": "vue-cli-service build"
+    "build": "vue-cli-service build",
+    "electron": "electron .",
+    "electron-dev": "concurrently \"yarn serve\" \"wait-on http://localhost:8080 && electron .\"",
+    "build-electron": "yarn build && electron-builder",
+    "dist": "yarn build && electron-builder --publish=never"
   },
   "dependencies": {
-    "@types/lodash": "^4.14.202",
-    "@types/xlsx": "^0.0.36",
     "core-js": "^3.8.3",
-    "echarts": "^5.6.0",
-    "element-plus": "^2.10.4",
-    "vue": "^3.2.13",
-    "vue-class-component": "^8.0.0-0",
-    "vue-router": "^4.0.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vue/cli-plugin-router": "~5.0.0",
     "@vue/cli-plugin-typescript": "~5.0.0",
     "@vue/cli-service": "~5.0.0",
-    "typescript": "~4.5.5"
+    "concurrently": "^9.2.0",
+    "electron": "^37.2.1",
+    "electron-builder": "^26.0.12",
+    "typescript": "~4.5.5",
+    "wait-on": "^8.0.3",
+    "echarts": "^5.6.0",
+    "element-plus": "^2.10.4",
+    "vue": "^3.2.13",
+    "vue-class-component": "^8.0.0-0",
+    "vue-router": "^4.0.3",
+    "@types/lodash": "^4.14.202",
+    "@types/xlsx": "^0.0.36"
+  },
+  "build": {
+    "appId": "com.electron.datavisual",
+    "productName": "数据可视化工具",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.js",
+      "node_modules/**/*",
+      "public/favicon.ico"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }
