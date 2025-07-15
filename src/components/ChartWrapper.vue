@@ -567,6 +567,10 @@ const confirmAddColumn = () => {
       const cellAddress = XLSX.utils.encode_cell({ r: row, c: columnIndex });
       const cell = worksheet[cellAddress];
       const value = cell && cell.v ? parseFloat(cell.v.toString()) : 0;
+      if (!cell) {
+        ElMessage.warning(`第 ${row + 1} 行数据无效，已跳过此后所有数据`);
+        break;
+      }
       if (cell.t != 'n' && cell.t != 's') {
         ElMessage.warning(`第 ${row + 1} 行数据无效，已跳过此后所有数据`);
         break;
