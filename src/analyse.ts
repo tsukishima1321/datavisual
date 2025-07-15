@@ -100,24 +100,64 @@ export const AMPD = (data: number[]): number[] => {
 }
 
 /**
- * 用中心差分法计算一维数组的导数
+ * 用五点求导法计算一维数组的导数
  * @param data 1-D number array
  * @returns 求导后的数组
  * */
 export const derivative = (data: number[], pointsPerSecond: number): number[] => {
     const result: number[] = [];
     const count = data.length;
-    if (count < 2) {
-        return result; // 如果数据点少于2个，无法计算导数
-    }
+    const dt = 1 / pointsPerSecond; // 时间间隔
+    // 处理边界情况和内部点
     for (let i = 0; i < count; i++) {
         if (i === 0) {
-            result.push((data[i + 1] - data[i]) * pointsPerSecond);
+            // 左边界：前向差分
+            result[i] = (data[i + 1] - data[i]) / dt;
+        } else if (i === 1) {
+            // 次左边界：三点中心差分
+            result[i] = (data[i + 1] - data[i - 1]) / (2 * dt);
+        } else if (i === count - 2) {
+            // 次右边界：三点中心差分
+            result[i] = (data[i + 1] - data[i - 1]) / (2 * dt);
         } else if (i === count - 1) {
-            result.push((data[i] - data[i - 1]) * pointsPerSecond);
+            // 右边界：后向差分
+            result[i] = (data[i] - data[i - 1]) / dt;
         } else {
-            result.push(((data[i + 1] - data[i - 1]) / 2) * pointsPerSecond);
+            // 内部点：五点中心差分
+            result[i] = (-data[i + 2] + 8 * data[i + 1] - 8 * data[i - 1] + data[i - 2]) / (12 * dt);
         }
     }
     return result;
+}
+
+/**
+ * 用滑动平均法平滑一维数组
+ * @param data 1-D number array
+ * @param windowSize 窗口大小
+ * @return 平滑后的数组
+ */
+export const smooth = (data: number[], windowSize: number): number[] => {
+    if (windowSize <= 0 || windowSize > data.length) {
+        return data.slice(); // 返回原数组的副本
+    }
+
+    const halfWindow = Math.floor(windowSize / 2);
+    const smoothedData: number[] = new Array(data.length).fill(0);
+
+    for (let i = 0; i < data.length; i++) {
+        let sum = 0;
+        let count = 0;
+
+        for (let j = -halfWindow; j <= halfWindow; j++) {
+            const index = i + j;
+            if (index >= 0 && index < data.length) {
+                sum += data[index];
+                count++;
+            }
+        }
+
+        smoothedData[i] = sum / count;
+    }
+
+    return smoothedData;
 }

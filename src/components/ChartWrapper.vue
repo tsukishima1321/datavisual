@@ -1,8 +1,8 @@
 <template>
   <div class="chartwrapper">
     <div class="control-panel">
-      <el-upload class="upload-demo" drag :auto-upload="false" accept=".xlsx, .xls" v-model:file-list="fileList"
-        :limit="1" :on-change="handleFileChange" :on-remove="handleRemove">
+      <el-upload class="upload-demo" drag :auto-upload="false" accept=".xlsx" v-model:file-list="fileList" :limit="1"
+        :on-change="handleFileChange" :on-remove="handleRemove">
         <el-icon class="el-icon--upload"><upload-filled /></el-icon>
         <div class="el-upload__text">
           拖曳或 <em>点击上传excel文件</em>
@@ -11,7 +11,7 @@
       <ElCollapse expand-icon-position="left">
         <ElCollapseItem title='数据列选择'>
           <div class="transfer-panel">
-            <ElButton type="primary" @click="selectDataSerie" style="margin-right: auto;">从表格中添加数据列</ElButton>
+            <ElButton type="primary" @click="selectDataSerie" style="margin-right: auto;">导入数据列</ElButton>
             <el-transfer v-model="selectedSeries" :data="series" :titles="['可选数据列', '已选数据列']" />
             <ElButton type="primary" @click="updateChart" style="margin-right: auto;">更新图表</ElButton>
           </div>
@@ -33,8 +33,14 @@
               显示 {{ Math.round((endTime - startTime) * pointsPerSecond) }} 个数据点
             </span>
           </div>
+          <div class="y-axis-controls">
+            <div class="input-group">
+              <label>使用统一Y轴比例:</label>
+              <el-switch v-model="useUnifiedYAxis" @change="onUnifiedYAxisChange" />
+            </div>
+          </div>
         </ElCollapseItem>
-        <ElCollapseItem title='数据列修正'>
+        <ElCollapseItem title='单数据列运算'>
           <div class="data-correction-panel">
             <div class="correction-select">
               <label>选择数据列:</label>
@@ -50,6 +56,9 @@
                 <el-option label="减法 (-)" value="subtract" />
                 <el-option label="乘法 (×)" value="multiply" />
                 <el-option label="除法 (÷)" value="divide" />
+                <el-option label="幂运算" value="expn" />
+                <el-option label="指数运算" value="exp" />
+                <el-option label="对数运算" value="log" />
                 <el-option label="求导" value="derivative" />
               </el-select>
             </div>
@@ -57,6 +66,10 @@
               <label>修正值:</label>
               <el-input-number v-model="correctionForm.value" :precision="6" :step="0.1" style="width: 200px"
                 placeholder="请输入修正值" />
+            </div>
+            <div class="input-group" v-if="correctionForm.operation == 'derivative'">
+              <label>是否平滑输出曲线:</label>
+              <el-switch v-model="smoothOutput" />
             </div>
             <div class="correction-apply-mode">
               <label>应用方式:</label>
@@ -76,7 +89,7 @@
             </div>
           </div>
         </ElCollapseItem>
-        <ElCollapseItem title='数据列比对'>
+        <ElCollapseItem title='双数据列运算'>
           <div class="comparison-panel">
             <div class="comparison-select">
               <div class="select-group">
@@ -171,6 +184,11 @@
             </ElCollapseItem>
           </ElCollapse>
         </ElCollapseItem>
+        <ElCollapseItem title="数据列导出">
+          <div class="export-controls">
+            <ElButton type="primary" @click="exportDataToExcel">导出数据列到Excel</ElButton>
+          </div>
+        </ElCollapseItem>
       </ElCollapse>
     </div>
     <div class="chartColumn">
@@ -221,16 +239,62 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 数据导出对话框 -->
+    <el-dialog v-model="showExportDialog" title="导出数据到Excel" width="600px">
+      <el-form :model="exportForm" label-width="120px">
+        <el-form-item label="选择数据列">
+          <el-select v-model="exportForm.seriesKey" placeholder="请选择要导出的数据列" style="width: 100%">
+            <el-option v-for="serie in series" :key="serie.key" :label="serie.label" :value="serie.key.toString()" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="目标工作表">
+          <el-select v-model="exportForm.targetSheetName" placeholder="请选择目标工作表" style="width: 100%">
+            <el-option v-for="sheet in availableSheets" :key="sheet" :label="sheet" :value="sheet" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="导出方式">
+          <el-radio-group v-model="exportForm.exportMode">
+            <el-radio value="replace">替换现有列</el-radio>
+            <el-radio value="new">插入新列</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item label="目标列" v-if="exportForm.exportMode === 'replace'">
+          <el-select v-model="exportForm.targetColumn" placeholder="请选择要替换的列" style="width: 100%"
+            @focus="updateExportColumnNames">
+            <el-option v-for="column in exportAvailableColumns" :key="column" :label="column" :value="column" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="新列名称" v-if="exportForm.exportMode === 'new'">
+          <el-input v-model="exportForm.newColumnName" placeholder="请输入新列的名称" style="width: 100%" />
+        </el-form-item>
+
+        <el-form-item label="是否包含表头">
+          <el-switch v-model="exportForm.includeHeader" />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="showExportDialog = false">取消</el-button>
+          <el-button type="primary" @click="confirmExportData" :disabled="!canExportData">确认导出</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import * as echarts from 'echarts'
-import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElRadio, ElRadioGroup } from 'element-plus'
+import { ElLoading, ElButton, ElCollapse, ElCollapseItem, ElTransfer, ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElInputNumber, ElRadio, ElRadioGroup, ElSwitch } from 'element-plus'
 import type { UploadFile } from 'element-plus';
-import { generateContinuousData, generateTimeData } from '@/test';
-import { findMaxRange, maxRangeResult, AMPD, derivative } from '@/analyse';
+import { generateTimeData } from '@/test';
+import { findMaxRange, maxRangeResult, AMPD, derivative, smooth } from '@/analyse';
 import * as XLSX from 'xlsx';
 
 interface dataSerie {
@@ -278,7 +342,19 @@ const columnForm = ref({
   hasHeader: true // 默认有表头
 });
 
-// 数据列比对相关的响应式变量
+// 数据导出相关的响应式变量
+const showExportDialog = ref(false);
+const exportAvailableColumns = ref<string[]>([]);
+const exportForm = ref({
+  seriesKey: '' as string,
+  targetSheetName: '' as string,
+  exportMode: 'new' as string, // 'replace' | 'new'
+  targetColumn: '' as string,
+  newColumnName: '' as string,
+  includeHeader: true
+});
+
+// 双数据列运算相关的响应式变量
 const comparisonForm = ref({
   seriesAKey: '' as string,
   seriesBKey: '' as string,
@@ -289,7 +365,7 @@ const comparisonForm = ref({
 // 存储当前比对结果
 const currentComparisonResult = ref<dataSerie | null>(null);
 
-// 数据列修正相关的响应式变量
+// 单数据列运算相关的响应式变量
 const correctionForm = ref({
   seriesKey: '' as string,
   operation: 'add' as string,
@@ -297,6 +373,8 @@ const correctionForm = ref({
   applyMode: 'new' as string, // 'replace' | 'new'
   newName: '修正后数据'
 });
+
+const smoothOutput = ref(false); // 是否平滑输出曲线
 
 // 修正预览相关
 const showCorrectionPreview = ref(false);
@@ -526,7 +604,7 @@ const confirmAddColumn = () => {
   }
 };
 
-// 数据列比对相关的计算属性
+// 双数据列运算相关的计算属性
 const availableSeriesForComparison = computed(() => {
   return series.value.filter(s => selectedSeries.value.includes(s.key));
 });
@@ -538,7 +616,7 @@ const canPerformComparison = computed(() => {
     comparisonForm.value.resultName.trim() !== '';
 });
 
-// 数据列比对相关的方法
+// 双数据列运算相关的方法
 const performComparison = () => {
   if (!canPerformComparison.value) {
     ElMessage.warning('请选择两个不同的数据列并输入结果名称');
@@ -672,7 +750,7 @@ const saveComparisonResult = () => {
   ElMessage.success(`比对结果已保存为数据系列：${currentComparisonResult.value.name}`);
 };
 
-// 数据列修正相关的计算属性
+// 单数据列运算相关的计算属性
 const canPerformCorrection = computed(() => {
   return correctionForm.value.seriesKey &&
     correctionForm.value.operation &&
@@ -681,7 +759,15 @@ const canPerformCorrection = computed(() => {
       (correctionForm.value.applyMode === 'new' && correctionForm.value.newName.trim() !== ''));
 });
 
-// 数据列修正相关的方法
+// 导出相关的计算属性
+const canExportData = computed(() => {
+  return exportForm.value.seriesKey &&
+    exportForm.value.targetSheetName &&
+    ((exportForm.value.exportMode === 'replace' && exportForm.value.targetColumn) ||
+      (exportForm.value.exportMode === 'new' && exportForm.value.newColumnName.trim() !== ''));
+});
+
+// 单数据列运算相关的方法
 const performCorrection = () => {
   if (!canPerformCorrection.value) {
     ElMessage.warning('请完善修正参数');
@@ -804,7 +890,11 @@ const clearCorrectionPreview = () => {
 const applyCorrectionToData = (data: number[], operation: string, value: number): number[] => {
   if (operation === 'derivative') {
     // 求导操作
-    return derivative(data,pointsPerSecond)
+    if (smoothOutput.value) {
+      return smooth(derivative(data, pointsPerSecond), pointsPerSecond);
+    } else {
+      return derivative(data, pointsPerSecond);
+    }
   } else {
     return data.map(item => {
       switch (operation) {
@@ -816,6 +906,12 @@ const applyCorrectionToData = (data: number[], operation: string, value: number)
           return item * value;
         case 'divide':
           return value !== 0 ? item / value : item;
+        case 'expn':
+          return Math.pow(item, value);
+        case 'log':
+          return item > 0 ? Math.log(item) / Math.log(value) : item;
+        case 'exp':
+          return Math.pow(value, item);
         default:
           return item;
       }
@@ -902,34 +998,60 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highligh
         }
       }
     },
-    yAxis: series.map(s => ({
-      type: 'value',
-      name: s.yAxisName,
-      position: series.indexOf(s) === 0 ? 'left' : 'right',
-      axisLine: {
-        lineStyle: {
-          color: '#ddd'
+    yAxis: useUnifiedYAxis.value ?
+      // 使用统一Y轴比例
+      [{
+        type: 'value',
+        name: series.length > 1 ? '数值' : series[0].yAxisName,
+        position: 'left',
+        axisLine: {
+          lineStyle: {
+            color: '#ddd'
+          }
+        },
+        axisLabel: {
+          formatter: '{value}',
+          color: '#666',
+          fontSize: 10
+        },
+        splitLine: {
+          show: true,
+          lineStyle: {
+            color: '#f5f5f5',
+            type: 'dashed'
+          }
         }
-      },
-      axisLabel: {
-        formatter: s.valueFormat,
-        color: '#666',
-        fontSize: 10
-      },
-      splitLine: {
-        show: true,
-        lineStyle: {
-          color: '#f5f5f5',
-          type: 'dashed'
+      }] :
+      // 使用独立Y轴比例
+      series.map(s => ({
+        type: 'value',
+        name: s.yAxisName,
+        position: series.indexOf(s) === 0 ? 'left' : 'right',
+        axisLine: {
+          lineStyle: {
+            color: '#ddd'
+          }
+        },
+        axisLabel: {
+          formatter: s.valueFormat,
+          color: '#666',
+          fontSize: 10
+        },
+        splitLine: {
+          show: true,
+          lineStyle: {
+            color: '#f5f5f5',
+            type: 'dashed'
+          }
         }
-      }
-    })),
+      })),
     series: series.map((s, index) => ({
       name: s.name,
       type: 'line',
       symbol: 'none',
       data: s.data,
-      smooth: true,
+      smooth: false,
+      sampling: 'lttb', // 使用LTTB采样算法
       lineStyle: {
         color: colors[index % colors.length],
         width: 1.5
@@ -937,7 +1059,7 @@ const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highligh
       itemStyle: {
         color: colors[index % colors.length]
       },
-      yAxisIndex: index
+      yAxisIndex: useUnifiedYAxis.value ? 0 : index // 统一Y轴时都使用索引0，否则使用各自索引
     })),
     animation: false, // 关闭动画
     notMerge: true // 取消合并options实现图表实时更新
@@ -1173,6 +1295,9 @@ const showResult = ref(false)
 const startTime = ref(0)
 const endTime = ref(50) // 默认显示前50秒
 
+// 控制Y轴比例的响应式变量
+const useUnifiedYAxis = ref(false)
+
 // 更新数据缩放范围
 const updateDataZoom = () => {
   if (!chartInstance) return
@@ -1209,6 +1334,17 @@ const resetZoom = () => {
   startTime.value = 0
   endTime.value = Math.min(50, totalSeconds) // 确保不超过总时长
   updateDataZoom()
+}
+
+// 处理统一Y轴开关变化
+const onUnifiedYAxisChange = () => {
+  // 重新绘制图表以应用新的Y轴配置
+  fillChart();
+  if (useUnifiedYAxis.value) {
+    ElMessage.success('已启用统一Y轴比例');
+  } else {
+    ElMessage.info('已禁用统一Y轴比例');
+  }
 }
 
 // 初始化图表
@@ -1279,6 +1415,182 @@ const updateChart = () => {
   fillChart();
 }
 
+const exportDataToExcel = () => {
+  if (!excelWorkbook) {
+    ElMessage.error('Excel文件未加载');
+    return;
+  }
+
+  if (series.value.length === 0) {
+    ElMessage.warning('没有可导出的数据列');
+    return;
+  }
+
+  // 重置导出表单
+  exportForm.value = {
+    seriesKey: '',
+    targetSheetName: availableSheets.value.length > 0 ? availableSheets.value[0] : '',
+    exportMode: 'new',
+    targetColumn: '',
+    newColumnName: '',
+    includeHeader: true
+  };
+
+  showExportDialog.value = true;
+}
+
+// 更新导出目标列名列表
+const updateExportColumnNames = () => {
+  const sheetName = exportForm.value.targetSheetName;
+
+  if (!excelWorkbook || !sheetName) {
+    exportAvailableColumns.value = [];
+    return;
+  }
+
+  try {
+    const worksheet = excelWorkbook.Sheets[sheetName];
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+    const columns: string[] = [];
+
+    // 获取第一行作为列名（假设有表头）
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col });
+      const cell = worksheet[cellAddress];
+      if (cell && cell.v) {
+        columns.push(cell.v.toString());
+      } else {
+        columns.push(`列${String.fromCharCode(65 + col)}`); // A, B, C...
+      }
+    }
+
+    exportAvailableColumns.value = columns;
+  } catch (error) {
+    ElMessage.error('读取工作表列名失败');
+    console.error('读取工作表列名错误:', error);
+  }
+};
+
+// 确认导出数据
+const confirmExportData = () => {
+  if (!canExportData.value) {
+    ElMessage.warning('请完善导出参数');
+    return;
+  }
+
+  const seriesKey = parseInt(exportForm.value.seriesKey);
+  const targetSerie = series.value.find(s => s.key === seriesKey);
+
+  if (!targetSerie) {
+    ElMessage.error('找不到选中的数据列');
+    return;
+  }
+
+  if (!excelWorkbook) {
+    ElMessage.error('Excel文件未加载');
+    return;
+  }
+
+  loading.value = true;
+  const loadingInstance = ElLoading.service({
+    lock: true,
+    text: '正在导出数据...',
+    background: 'rgba(0, 0, 0, 0.7)',
+  });
+
+  try {
+    const worksheet = excelWorkbook.Sheets[exportForm.value.targetSheetName];
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+
+    let targetColumnIndex = -1;
+
+    if (exportForm.value.exportMode === 'replace') {
+      // 替换现有列 - 查找目标列索引
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: col });
+        const cell = worksheet[cellAddress];
+        const cellValue = cell && cell.v ? cell.v.toString() : `列${String.fromCharCode(65 + col)}`;
+        if (cellValue === exportForm.value.targetColumn) {
+          targetColumnIndex = col;
+          break;
+        }
+      }
+
+      if (targetColumnIndex === -1) {
+        ElMessage.error('未找到指定的目标列');
+        return;
+      }
+    } else {
+      // 插入新列 - 使用最右边的列+1
+      targetColumnIndex = range.e.c + 1;
+    }
+
+    // 准备要写入的数据
+    const dataToWrite = targetSerie.serie.data;
+    let startRow = 0;
+
+    // 如果包含表头且是新列模式，先写入列名
+    if (exportForm.value.includeHeader) {
+      const headerCellAddress = XLSX.utils.encode_cell({ r: 0, c: targetColumnIndex });
+      const headerValue = exportForm.value.exportMode === 'new'
+        ? exportForm.value.newColumnName
+        : exportForm.value.targetColumn;
+
+      worksheet[headerCellAddress] = {
+        t: 's',
+        v: headerValue
+      };
+      startRow = 1;
+    }
+
+    // 写入数据
+    for (let i = 0; i < dataToWrite.length; i++) {
+      const cellAddress = XLSX.utils.encode_cell({ r: startRow + i, c: targetColumnIndex });
+      worksheet[cellAddress] = {
+        t: 'n',
+        v: dataToWrite[i]
+      };
+    }
+
+    // 更新工作表范围
+    const newRange = {
+      s: { c: Math.min(range.s.c, targetColumnIndex), r: range.s.r },
+      e: { c: Math.max(range.e.c, targetColumnIndex), r: Math.max(range.e.r, startRow + dataToWrite.length - 1) }
+    };
+    worksheet['!ref'] = XLSX.utils.encode_range(newRange);
+
+    // 生成新的Excel文件并下载
+    const workbook = excelWorkbook;
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    // 创建下载链接
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `导出数据_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    showExportDialog.value = false;
+
+    if (exportForm.value.exportMode === 'replace') {
+      ElMessage.success(`数据已成功替换到列"${exportForm.value.targetColumn}"`);
+    } else {
+      ElMessage.success(`数据已成功导出到新列"${exportForm.value.newColumnName}"`);
+    }
+
+  } catch (error) {
+    ElMessage.error('导出数据失败');
+    console.error('导出数据错误:', error);
+  } finally {
+    loading.value = false;
+    loadingInstance.close();
+  }
+};
+
 // 处理窗口大小变化
 const handleResize = () => {
   if (chartInstance) {
@@ -1328,6 +1640,17 @@ label {
   align-items: flex-start;
   gap: 15px;
   flex-wrap: wrap;
+}
+
+.y-axis-controls {
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 15px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e6e6e6;
 }
 
 .input-group {
