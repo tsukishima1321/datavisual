@@ -16,30 +16,6 @@
             <ElButton type="primary" @click="updateChart" style="margin-right: auto;">更新图表</ElButton>
           </div>
         </ElCollapseItem>
-        <ElCollapseItem title='显示范围控制'>
-          <div class="zoom-controls">
-            <div class="input-group">
-              <label>起始点 (秒):</label>
-              <input v-model.number="startTime" type="number" min="0" :max="totalSeconds - 0.01" step="0.1"
-                @change="updateDataZoom" class="time-input" />
-            </div>
-            <div class="input-group">
-              <label>结束点 (秒):</label>
-              <input v-model.number="endTime" type="number" :min="startTime + 0.1" :max="totalSeconds" step="0.1"
-                @change="updateDataZoom" class="time-input" />
-            </div>
-            <button @click="resetZoom" class="reset-btn">重置</button>
-            <span class="data-info">
-              显示 {{ Math.round((endTime - startTime) * pointsPerSecond) }} 个数据点
-            </span>
-          </div>
-          <div class="y-axis-controls">
-            <div class="input-group">
-              <label>使用统一Y轴比例:</label>
-              <el-switch v-model="useUnifiedYAxis" @change="onUnifiedYAxisChange" />
-            </div>
-          </div>
-        </ElCollapseItem>
         <ElCollapseItem title='单数据列运算'>
           <div class="data-correction-panel">
             <div class="correction-select">
@@ -154,14 +130,26 @@
               </div>
             </ElCollapseItem>
             <ElCollapseItem title="峰值搜索">
-              <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列"
-                style="width: 250px;margin-right: 5px;">
-                <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
-                  :value="serie.key.toString()" />
-              </el-select>
-              <ElButton type="primary" @click="performPeakSearch">执行峰值搜索</ElButton>
-              <ElButton type="success" @click="highlightPeakSearch" :disabled="!peakSearchResult">高亮峰值</ElButton>
-              <ElButton type="info" @click="clearPeakSearchResult">清除峰值结果</ElButton>
+              <div class="analysis-controls">
+                <el-select v-model="analysisForm.seriesKey" placeholder="请选择要分析的数据列"
+                  style="width: 250px;margin-right: 5px;">
+                  <el-option v-for="serie in availableSeriesForComparison" :key="serie.key" :label="serie.label"
+                    :value="serie.key.toString()" />
+                </el-select>
+                <div class="input-group">
+                  <label>最小峰值高度:（相对于数据均值的倍数）</label>
+                  <el-input-number v-model="analysisForm.minPeakHeight" :min="0" :max="1000" :step="0.1" />
+                </div>
+                <div class="input-group">
+                  <label>最小峰值距离：（相对数据总长度的倍数）</label>
+                  <el-input-number v-model="analysisForm.minPeakDistance" :min="0" :max="1" :step="0.01" />
+                </div>
+                <div class="analysis-row">
+                  <ElButton type="primary" @click="performPeakSearch">执行峰值搜索</ElButton>
+                  <ElButton type="success" @click="highlightPeakSearch" :disabled="!peakSearchResult">高亮峰值</ElButton>
+                  <ElButton type="info" @click="clearPeakSearchResult">清除峰值结果</ElButton>
+                </div>
+              </div>
               <div class="peak-search-result" v-if="peakSearchResult && peakSearchResult.length">
                 <p>共检测到 {{ peakSearchResult.length }} 个峰值：</p>
                 <ul>
@@ -192,6 +180,34 @@
       </ElCollapse>
     </div>
     <div class="chartColumn">
+      <div class="chart-config">
+        <div class="input-group config-item">
+          <label>输入表格标题：</label>
+          <el-input v-model="chartTitle" placeholder="请输入图表标题" style="width: 300px;" />
+        </div>
+        <div class="zoom-controls config-item">
+          <div class="input-group">
+            <label>起始点 (秒):</label>
+            <input v-model.number="startTime" type="number" min="0" :max="totalSeconds - 0.01" step="0.1"
+              @change="updateDataZoom" class="time-input" />
+          </div>
+          <div class="input-group">
+            <label>结束点 (秒):</label>
+            <input v-model.number="endTime" type="number" :min="startTime + 0.1" :max="totalSeconds" step="0.1"
+              @change="updateDataZoom" class="time-input" />
+          </div>
+          <button @click="resetZoom" class="reset-btn">重置</button>
+          <span class="data-info">
+            显示 {{ Math.round((endTime - startTime) * pointsPerSecond) }} 个数据点
+          </span>
+        </div>
+        <div class="y-axis-controls config-item">
+          <div class="input-group">
+            <label>使用统一Y轴比例:</label>
+            <el-switch v-model="useUnifiedYAxis" @change="onUnifiedYAxisChange" />
+          </div>
+        </div>
+      </div>
       <div ref="chartContainer" class="chart-container"></div>
       <div ref="resultChartContainer" class="chart-container"></div>
     </div>
@@ -321,6 +337,8 @@ let totalSeconds = 500
 let pointsPerSecond = 100
 let totalPoints = totalSeconds * pointsPerSecond
 
+const chartTitle = ref('数据曲线图');
+
 let timeData: Array<string> = []
 
 const selectedSeries = ref<Array<number>>([]);
@@ -383,7 +401,9 @@ const currentCorrectionPreview = ref<dataSerie | null>(null);
 // 数据分析相关的响应式变量
 const analysisForm = ref({
   seriesKey: '' as string,
-  range: 90 as number // 默认搜索范围为90%
+  range: 90 as number, // 默认搜索范围为90%
+  minPeakHeight: 0.5 as number, // 最小峰值高度
+  minPeakDistance: 0.02 as number // 最小峰值距离（相对于数据总长度的倍数）
 });
 
 const maxResult = ref<maxRangeResult | null>(null);
@@ -926,6 +946,15 @@ const applyCorrectionToData = (data: number[], operation: string, value: number)
 // 根据数据系列生成完整的图表配置
 const chartOptionFromSeries = (series: dataSerie[], timeData: string[], highlightRange?: { start: number, end: number }): echarts.EChartsOption => {
   const option: echarts.EChartsOption = {
+    title: {
+      text: chartTitle.value,
+      left: 'center',
+      top: '5%',
+      textStyle: {
+        color: '#333',
+        fontSize: 16
+      }
+    },
     tooltip: {
       trigger: 'axis',
       backgroundColor: 'rgba(0, 0, 0, 0.8)',
@@ -1239,9 +1268,11 @@ const performPeakSearch = () => {
   }
 
   // 执行峰值搜索
-  const peaks = AMPD(data);
+  const peaks = AMPD(data, analysisForm.value.minPeakHeight, analysisForm.value.minPeakDistance);
   if (peaks.length === 0) {
     ElMessage.error('未找到符合条件的峰值');
+    loading.value = false;
+    loadingInstance.close();
     return;
   }
 
@@ -1405,6 +1436,9 @@ const fillChart = (highlightRange?: { start: number, end: number }) => {
     ElMessage.warning('请选择至少一个数据列');
     return;
   }
+
+  endTime.value = totalSeconds;
+  startTime.value = 0;
 
   const chartData: dataSerie[] = selected.map(s => (s.serie));
 
@@ -1637,6 +1671,17 @@ label {
   padding: 5px;
 }
 
+.chart-config {
+  display: flex;
+  flex-direction: column;
+}
+
+.config-item {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e6e6e6;
+}
+
 .zoom-controls {
   width: 100%;
   display: flex;
@@ -1652,9 +1697,6 @@ label {
   flex-direction: row;
   align-items: center;
   gap: 15px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #e6e6e6;
 }
 
 .input-group {

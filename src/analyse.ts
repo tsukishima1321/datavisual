@@ -57,46 +57,121 @@ export const findMaxRange = (data: number[], range: number): maxRangeResult => {
 /**
  * 实现AMPD算法，搜索一维数组中的波峰
  * @param data 1-D number array
+ * @param minPeakHeight 最小峰值高度（相对于数据均值的倍数，默认0.5）
+ * @param minPeakDistance 最小峰值距离（默认为数据长度的1/50）
  * @returns 波峰所在索引值的数组
  */
-export const AMPD = (data: number[]): number[] => {
-    const count = data.length;
-    const pData = new Array(count).fill(0);
-    const arrRowsum: number[] = [];
+export const AMPD = (data: number[], minPeakHeight: number = 0.5, minPeakDistance: number = 0.02): number[] => {
+    const N = data.length;
+    if (N < 3) {
+        return [];
+    }
 
-    // 第一个循环 - 找到最优窗口大小
-    for (let k = 1; k <= Math.floor(count / 2); k++) {
-        let rowSum = 0;
-        for (let i = k; i < count - k; i++) {
-            if (data[i] > data[i - k] && data[i] > data[i + k]) {
-                rowSum -= 1;
+    // 计算数据的统计信息
+    const mean = data.reduce((sum, val) => sum + val, 0) / N;
+    const variance = data.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / N;
+    const std = Math.sqrt(variance);
+    
+    // 设置默认最小峰值距离
+    const actualMinDistance = Math.max(Math.floor(N * minPeakDistance), 5);
+    
+    // 设置峰值高度阈值
+    const heightThreshold = mean + minPeakHeight * std;
+
+    // 第一步：生成Local Maxima Scalogram (LMS)
+    const maxScale = Math.min(Math.floor(N / 10), 50); // 限制最大尺度
+    const LMS: boolean[][] = [];
+    
+    // 初始化LMS矩阵
+    for (let i = 0; i < N; i++) {
+        LMS[i] = new Array(maxScale).fill(false);
+    }
+    
+    // 计算LMS矩阵 - 添加高度阈值过滤
+    for (let scale = 1; scale <= maxScale; scale++) {
+        for (let i = scale; i < N - scale; i++) {
+            if (data[i] > data[i - scale] && 
+                data[i] > data[i + scale] && 
+                data[i] >= heightThreshold) {
+                LMS[i][scale - 1] = true;
             }
         }
-        arrRowsum.push(rowSum);
     }
-
-    // 找到最小值的索引
-    const minIndex = arrRowsum.indexOf(Math.min(...arrRowsum));
-    const maxWindowLength = minIndex + 1; // 因为k从1开始，所以要+1
-
-    // 第二个循环 - 统计波峰出现次数
-    for (let k = 1; k <= maxWindowLength; k++) {
-        for (let i = k; i < count - k; i++) {
-            if (data[i] > data[i - k] && data[i] > data[i + k]) {
-                pData[i] += 1;
+    
+    // 第二步：计算γ（gamma）
+    const gamma: number[] = new Array(maxScale).fill(0);
+    for (let scale = 0; scale < maxScale; scale++) {
+        for (let i = 0; i < N; i++) {
+            if (LMS[i][scale]) {
+                gamma[scale]++;
             }
         }
     }
-
-    // 返回在所有测试窗口大小中都被识别为波峰的索引
-    const peaks: number[] = [];
-    for (let i = 0; i < count; i++) {
-        if (pData[i] === maxWindowLength) {
-            peaks.push(i);
+    
+    // 第三步：找到最优尺度（改进的选择方法）
+    let optimalScale = 1;
+    let minGamma = Infinity;
+    
+    // 寻找峰值数量相对稳定且较少的尺度
+    for (let scale = Math.max(1, Math.floor(actualMinDistance / 2)); scale <= Math.min(maxScale, actualMinDistance * 2); scale++) {
+        if (gamma[scale - 1] > 0 && gamma[scale - 1] < minGamma) {
+            minGamma = gamma[scale - 1];
+            optimalScale = scale;
         }
     }
-
-    return peaks;
+    
+    // 如果没有找到合适的尺度，使用较大的尺度
+    if (minGamma === Infinity) {
+        optimalScale = Math.min(maxScale, actualMinDistance);
+    }
+    
+    // 第四步：使用最优尺度提取峰值
+    const candidatePeaks: number[] = [];
+    for (let i = 0; i < N; i++) {
+        if (optimalScale <= maxScale && LMS[i][optimalScale - 1]) {
+            candidatePeaks.push(i);
+        }
+    }
+    
+    // 第五步：峰值筛选和后处理
+    const filteredPeaks: number[] = [];
+    
+    // 首先按峰值高度排序（从高到低）
+    candidatePeaks.sort((a, b) => data[b] - data[a]);
+    
+    for (const currentPeak of candidatePeaks) {
+        let isValid = true;
+        
+        // 检查是否与已选择的峰值距离过近
+        for (const existingPeak of filteredPeaks) {
+            if (Math.abs(currentPeak - existingPeak) < actualMinDistance) {
+                isValid = false;
+                break;
+            }
+        }
+        
+        // 额外验证：检查是否真的是局部最大值
+        if (isValid) {
+            const checkRadius = Math.max(3, Math.floor(actualMinDistance / 3));
+            let isLocalMax = true;
+            
+            for (let j = Math.max(0, currentPeak - checkRadius); j <= Math.min(N - 1, currentPeak + checkRadius); j++) {
+                if (j !== currentPeak && data[j] >= data[currentPeak]) {
+                    isLocalMax = false;
+                    break;
+                }
+            }
+            
+            if (isLocalMax) {
+                filteredPeaks.push(currentPeak);
+            }
+        }
+    }
+    
+    // 按位置排序
+    filteredPeaks.sort((a, b) => a - b);
+    
+    return filteredPeaks;
 }
 
 /**
